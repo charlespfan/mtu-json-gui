@@ -589,19 +589,17 @@
 
 
 
+        // 修正后的 applyOriginalTextReplacement (约 170 行)
         function applyOriginalTextReplacement() {
             const hasBatch = matchedFiles.length > 0;
             let modifiedCount = 0;
 
-            // 核心处理逻辑：针对 regions 数组的操作
             const processRegions = (targetRegions) => {
                 targetRegions.forEach(r => {
                     if (r.texts && Array.isArray(r.texts)) {
                         r.texts = r.texts.map(text => {
                             let newText = text;
-                            // 严格按照 Angle 的二维数组遍历逻辑
                             replacements.forEach(([find, replace]) => {
-                                // 使用 while 循环确保全部替换（类似 Angle 的处理方式）
                                 while (newText.includes(find)) {
                                     newText = newText.replace(find, replace);
                                 }
@@ -614,71 +612,45 @@
             };
 
             if (hasBatch) {
-                // 批量模式：遍历所有已加载的文件
                 matchedFiles.forEach(file => processRegions(file.regions));
-                // 刷新当前页面以同步显示
-                loadFile(currentFileIndex);
+                // 【关键】如果是批量模式，必须重新加载当前页来同步内存
+                loadFile(currentFileIndex); 
             } else {
-                // 单 JSON 模式：直接操作当前内存
                 processRegions(regions);
-                // 刷新编辑框的内容显示
+                // 【关键】如果是单 JSON，手动同步编辑框并重绘
                 if (activeRegionIndex !== -1) {
                     document.getElementById('origEditArea').value = regions[activeRegionIndex].texts.join('\n');
                 }
                 draw(); 
             }
-
             return modifiedCount;
         }
 
-        function applyOriginalTextReplacement() {
-            const hasBatch = matchedFiles.length > 0;
-            let modifiedCount = 0;
-
-            const processRegions = (targetRegions) => {
-                targetRegions.forEach(r => {
-                    if (r.texts && Array.isArray(r.texts)) {
-                        r.texts = r.texts.map(text => {
-                            let newText = text;
-                            replacements.forEach(([find, replace]) => {
-                                while (newText.includes(find)) {
-                                    newText = newText.replace(find, replace);
-                                }
-                            });
-                            if (newText !== text) modifiedCount++;
-                            return newText;
-                        });
-                    }
-                });
-            };
-
-            if (hasBatch) {
-                matchedFiles.forEach(file => processRegions(file.regions));
-            } else {
-                processRegions(regions);
-            }
-            return modifiedCount;
-        }
 
         // 3. 绑定“一”按钮功能：替 + 自
         const batchProcessBtnRight = document.getElementById('batchProcessBtnRight');
 
+        // --- 一键全自动功能修正版 ---
         batchProcessBtnRight.onclick = async () => {
             const isBatch = matchedFiles.length > 0;
             const scope = isBatch ? `全书 (${matchedFiles.length}页)` : "当前页";
             
             if (!confirm(`确定要对 ${scope} 执行一键全自动处理吗？\n(包含：Angle 规则替换 + 自动字号 + 自动行距)`)) return;
 
-            // --- 第一步：替 (文本修正) ---
-            applyOriginalTextReplacement();
-
-            // --- 第二步：自 (排版优化) ---
             if (isBatch) {
-                // 批量模式保存当前修改
+                // 1. 【关键：先保存】
+                // 必须先将当前屏幕上（regions 变量里）的最新改动同步到内存数组中，
+                // 否则后续的文本替换和自动字号会基于旧数据操作。
                 if (matchedFiles[currentFileIndex]) {
                     matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
                 }
-                // 遍历所有页计算排版
+
+                // 2. 【执行“替”】
+                // 此时 applyOriginalTextReplacement 会修改内存中所有页（包含刚刚保存的当前页）的文本。
+                applyOriginalTextReplacement();
+
+                // 3. 【执行“自”】
+                // 遍历内存中的所有文件，基于“替换后”的干净文本计算字号和行距。
                 matchedFiles.forEach(fileItem => {
                     fileItem.regions.forEach(r => {
                         const autoSize = calculateAutoFontSizeForRegion(r);
@@ -686,21 +658,37 @@
                         r.line_spacing = calculateAutoLineSpacing(r, autoSize);
                     });
                 });
-                loadFile(currentFileIndex); // 刷新当前页
+                
+                // 4. 【刷新 UI】
+                // 重新加载当前页，确保画面和侧边栏显示的是替换并计算后的最终结果。
+                loadFile(currentFileIndex); 
             } else {
-                // 单页模式直接计算
+                // --- 单 JSON 模式逻辑 ---
+                if (regions.length === 0) {
+                    alert("未检测到有效的区域数据。");
+                    return;
+                }
+
+                // 1. 先执行文本替换
+                applyOriginalTextReplacement();
+                
+                // 2. 为当前页所有框执行自动排版优化
                 regions.forEach(r => {
                     const autoSize = calculateAutoFontSizeForRegion(r);
                     r.font_size = autoSize;
                     r.line_spacing = calculateAutoLineSpacing(r, autoSize);
                 });
+                
+                // 3. 同步更新原文编辑框的显示内容
                 if (activeRegionIndex !== -1) {
                     document.getElementById('origEditArea').value = regions[activeRegionIndex].texts.join('\n');
                 }
-                draw();
+                
+                // 4. 重绘画布
+                draw(); 
             }
 
-            // 视觉反馈
+            // 5. 视觉反馈逻辑（保持不变）
             batchProcessBtnRight.innerText = "OK!";
             batchProcessBtnRight.classList.add('text-green-400', 'border-green-500');
             setTimeout(() => {
