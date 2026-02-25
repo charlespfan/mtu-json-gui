@@ -202,7 +202,10 @@
                         <option value='"KaiTi", serif'>楷体</option>
                         <option value="custom">手动...</option>
                     </select>
-                    <label class="bg-purple-600 hover:bg-purple-500 text-white text-[10px] rounded px-2 flex items-center cursor-pointer" title="加载本地字体">
+                    <button onclick="detectSystemFonts()" class="bg-blue-600 hover:bg-blue-500 text-white text-[10px] rounded px-1.5 flex items-center h-6" title="检测系统所有字体">
+                        检
+                    </button>
+                    <label class="bg-purple-600 hover:bg-purple-500 text-white text-[10px] rounded px-2 flex items-center cursor-pointer" title="加载本地字体文件">
                         <span>+</span><input type="file" id="fontFileInput" accept=".ttf,.otf,.woff" class="hidden">
                     </label>
                 </div>
@@ -556,7 +559,7 @@
         let ctx = mainCanvasCtx; // 全局变量初始指向主画笔
         // 获取新栏位
         const tempEditArea = document.getElementById('tempEditArea');
-        const savedGlobalTemp = localStorage.getItem('mtu_global_temp_text') || "";
+        const savedGlobalTemp = sessionStorage.getItem('mtu_global_temp_text') || "";
 
         // 其他获取元素的语句
         const jsonFolderInput = document.getElementById('jsonFolderInput');
@@ -873,10 +876,9 @@
         // 1. 临时实时保存
         tempEditArea.value = savedGlobalTemp;
 
-        // 2. 输入时：保存到本地存储，但不存入 region
+        // 2. 输入时：
         tempEditArea.oninput = () => {
-            // 它是全局的，不属于任何 activeRegionIndex
-            localStorage.setItem('mtu_global_temp_text', tempEditArea.value);
+            sessionStorage.setItem('mtu_global_temp_text', tempEditArea.value);
         };
 
         mergeBtnRight.onclick = () => {
@@ -897,7 +899,7 @@
                     linesToMerge.push({
                         coord: JSON.parse(JSON.stringify(r.lines[item.lineIdx])), 
                         text: (r.texts && r.texts[item.lineIdx]) ? r.texts[item.lineIdx] : "",
-                        transSegment: mySegment.trim() // 【修复】：去掉前后的不可见空格
+                        transSegment: mySegment // 删掉 .trim()，保留文段内及首尾的空格
                     });
                 }
             });
@@ -927,8 +929,11 @@
 
                     if (remainingLines.length > 0) {
                         r.lines = remainingLines;
-                        if (r.texts) r.texts = remainingTexts;
-                        r.translation = remainingTrans.join('【BR】'); // 剩余部分保持译文
+                        if (r.texts) r.texts = remainingTexts; // 保留对应的原文
+                        
+                        // 只清洗译文
+                        r.translation = cleanTranslationText(remainingTrans.join('【BR】')); 
+                        
                         initRegionBox(r);
                         newRegions.push(r);
                     }
@@ -945,11 +950,7 @@
                 // 【核心修复】：
                 // 1. 使用 transSegment (已修改的翻译) 而不是 text (原文)
                 // 2. 使用 filter(s => s) 过滤掉由于拆分产生的无效空行
-                translation: linesToMerge
-                    .map(l => l.transSegment)
-                    .filter(s => s !== "") // 只保留有内容的行，防止出现多余【BR】
-                    .join('【BR】'),
-                    
+                translation: cleanTranslationText(linesToMerge.map(l => l.transSegment).filter(s => s !== "").join('【BR】')),                    
                 box: [] 
             };
 
@@ -992,20 +993,19 @@
             targetIndices.forEach(idx => {
                 const lineData = JSON.parse(JSON.stringify(r.lines[idx]));
                 const textData = (r.texts && r.texts[idx]) ? r.texts[idx] : "";
-                // 【核心修改】：如果没翻译，直接给空字符串，不补原文
+                // 直接获取原始片段，保留空格
                 const transData = transLines[idx] || ""; 
 
-                // 从原大框中剔除
                 r.lines.splice(idx, 1);
                 if (r.texts) r.texts.splice(idx, 1);
                 transLines.splice(idx, 1);
 
-                // 创建独立新框
                 const newR = {
                     ...JSON.parse(JSON.stringify(r)),
                     lines: [lineData],
                     texts: [textData],
-                    translation: transData, 
+                    // 【新增】：对新拆出来的翻译进行清洗，去掉可能存在的孤立 【BR】
+                    translation: cleanTranslationText(transData), 
                     box: [] 
                 };
                 initRegionBox(newR);
@@ -1013,7 +1013,12 @@
             });
 
             if (r.lines.length > 0) {
-                r.translation = transLines.join('【BR】');
+                // 1. 只清洗译文
+                r.translation = cleanTranslationText(transLines.join('【BR】'));
+                
+                // 2. 【千万删除】不要写 r.texts = []！
+                // 原文数组 r.texts 必须和 r.lines 的数量保持 100% 对等
+                
                 initRegionBox(r);
                 setActiveRegion(activeRegionIndex);
             } else {
@@ -1106,11 +1111,23 @@
         * 1. 移除开头和结尾的所有 【BR】
         * 2. (可选) 将连续多个 【BR】 合并为一个
         */
+        /**
+         * 强化版清洗函数：确保无文字的空框被彻底抹除
+         */
         function cleanTranslationText(text) {
             if (!text) return "";
+            
+            // 只检查去掉换行和空格后，译文是否还有实质内容
+            const hasActualContent = text.replace(/【BR】/g, '').trim().length > 0;
+            
+            if (!hasActualContent) {
+                return ""; // 译文确实没字了，返回空
+            }
+
+            // 有字的情况下，修剪首尾，合并中间多余换行
             return text
-                .replace(/^(【BR】)+|(【BR】)+$/g, '') // 移除开头和结尾的换行符
-                .replace(/(【BR】){2,}/g, '【BR】');   // 将连续重复的换行合并为一个 (根据需求可选)
+                .replace(/^(【BR】)+|(【BR】)+$/g, '') 
+                .replace(/(【BR】){2,}/g, '【BR】');   
         }
 
         // --- Rich Text Parser ---
@@ -1198,11 +1215,11 @@
         window.insertTagWithOptionalParam = window.insertTagWithParam;
 
         // 2. 绑定即时监听器（建议放在脚本末尾 resetSidebar 之前）
+        // 修改监听器 ---
         document.getElementById('transEditArea').addEventListener('input', (e) => {
             if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
-                // 实时同步数据
+                // 在存入数据前，将换行符替换为 【BR】，同时允许用户手动输入的 ↵ 符号存在
                 regions[activeRegionIndex].translation = e.target.value.replace(/\n/g, '【BR】');
-                // 立即重绘
                 draw();
             }
         });
@@ -1699,14 +1716,19 @@
                     transformState.dragging = true;
                     transformState.startMouse = pos;
 
-                    // 【核心修复】：原文模式下点中行才移动小框，否则一律移动大框
+                    // --- 精简版：原文模式只动小框，译文模式只动大框 ---
                     if (displayMode === 'original' && hit.lineIdx !== -1) {
+                        // 只有“原文模式”且“点中小框”时，才允许移动小框
                         transformState.action = 'move-line'; 
                         transformState.lineIndex = hit.lineIdx;
                         transformState.originalPoints = JSON.parse(JSON.stringify(regions[hit.regionIdx].lines[hit.lineIdx]));
-                    } else {
+                    } else if (displayMode === 'translation') {
+                        // “译文模式”下，点中任何地方都移动大框
                         transformState.action = 'move-region'; 
                         transformState.startBox = [...regions[hit.regionIdx].box];
+                    } else {
+                        // 其他情况（如原文模式点在大框空白处），禁止拖拽
+                        transformState.dragging = false; 
                     }
                 }
                 draw(); 
@@ -2352,7 +2374,9 @@
 
             if (!region.translation) return;
             const rawText = region.translation || "";
-            let lines = rawText.replace(/【BR】/g, '\n').split('\n');
+            // 【核心修改】：在 split 之前，把视觉用的 ↵ 符号全部抹掉，确保不渲染到屏幕
+            let lines = rawText.replace(/【BR】/g, '\n').replace(/↵/g, '').split('\n');
+            
             let boxWidth, boxHeight, angleRad;
             if (region.box) {
                 const [x1,y1,x2,y2] = region.box;
@@ -4393,7 +4417,51 @@
             draw();
         };
 
-        
+        /**
+        * 自动检测并列出系统字体
+        */
+        async function detectSystemFonts() {
+            // 检查浏览器是否支持该 API (目前 Chrome, Edge 支持)
+            if (!('queryLocalFonts' in window)) {
+                alert("当前浏览器不支持自动检测系统字体，请尝试使用 Chrome 或 Edge。");
+                return;
+            }
+
+            try {
+                // 请求权限并获取字体列表
+                const fonts = await window.queryLocalFonts();
+                const fontSelect = document.getElementById('fontSelect');
+
+                // 使用 Set 去重，因为一个字体家族通常包含很多变体 (Bold, Italic 等)
+                const families = [...new Set(fonts.map(f => f.family))].sort();
+
+                // 创建一个分组并添加到下拉框
+                const group = document.createElement('optgroup');
+                group.label = "--- 系统发现的字体 ---";
+
+                families.forEach(family => {
+                    const option = document.createElement('option');
+                    // 格式化为 CSS 属性值
+                    option.value = `"${family}", sans-serif`;
+                    option.textContent = family;
+                    group.appendChild(option);
+                });
+
+                fontSelect.appendChild(group);
+                
+                // 视觉反馈
+                const btn = event.currentTarget;
+                btn.innerText = "OK";
+                btn.classList.replace('bg-blue-600', 'bg-green-600');
+                console.log(`成功载入 ${families.length} 个系统字体`);
+
+            } catch (err) {
+                console.error("检测字体失败:", err);
+                if (err.name === 'NotAllowedError') {
+                    alert("用户拒绝了字体访问权限。");
+                }
+            }
+        }
 
         // --- 核心逻辑更新 ---
 
@@ -4670,12 +4738,15 @@
 
 
         // 译文即时重绘：处理换行标签
+        // 修改监听器 ---
         document.getElementById('transEditArea').addEventListener('input', (e) => {
             if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
+                // 在存入数据前，将换行符替换为 【BR】，同时允许用户手动输入的 ↵ 符号存在
                 regions[activeRegionIndex].translation = e.target.value.replace(/\n/g, '【BR】');
                 draw();
             }
         });
+
 
         // 原文即时重绘：处理数组拆分
         document.getElementById('origEditArea').addEventListener('input', (e) => {
