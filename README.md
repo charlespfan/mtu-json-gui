@@ -1,5 +1,5 @@
 
-# 🏮 MTU-JSON-GUI (Ultimate Edition)
+# 🏮 MTU-JSON-GUI (MTU嵌字编辑器)
 
 ### 专业的日漫汉化可视化排版工作站
 
