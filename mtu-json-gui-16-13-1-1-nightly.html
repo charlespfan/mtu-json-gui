@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v16.13.0)</title>
+    <title>MTU 嵌字编辑器 (v16.13.1.1)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
@@ -1598,8 +1598,17 @@
                     regions = data.regions || [];
                     regions.forEach(r => {
                         // ... (前面的属性初始化代码保持不变) ...
-                        if (r.direction === 'v') r.line_spacing = 1.2; else r.line_spacing = 1.2;
-                        if (r.fg_colors) r.parsedColor = parseColor(r.fg_colors);
+                        // 1. 方向归一化
+                        if (r.direction === 'vertical') r.direction = 'v';
+                        if (r.direction === 'horizontal') r.direction = 'h';
+                        
+                        // 2. 【核心修改】强制设定行间距和字间距，不接受 JSON 里的值
+                        r.line_spacing = 1.2;   // 强制设为你自己的默认行距
+                        r.letter_spacing = 0;   // 强制设为你自己的默认字距
+
+                        // 3. 颜色归一化：兼容 "fg_colors" 与 "font_color"
+                        const finalFg = r.fg_colors || r.font_color;
+                        if (finalFg) r.parsedColor = parseColor(finalFg);
 
                         // --- [新增] 加载时自动检测白色并加描边 ---
                         if (r.parsedColor) {
@@ -3843,10 +3852,17 @@
                         // 在循环处理 regions 的地方
                         // 在 matchAndLoadFiles 函数的循环内部修改：
                         fileRegions.forEach(r => {
-                            // 1. 基础属性初始化 (颜色、间距等)
-                            if (r.direction === 'v') r.line_spacing = 1.2; else r.line_spacing = 1.2;
-                            if (r.fg_colors) r.parsedColor = parseColor(r.fg_colors);
-                            if (typeof r.letter_spacing === 'undefined') r.letter_spacing = 0;
+                            // 1. 方向转换
+                            if (r.direction === 'vertical') r.direction = 'v';
+                            if (r.direction === 'horizontal') r.direction = 'h';
+
+                            // 2. 【核心修改】强制覆盖间距，无视 JSON 原始数据
+                            r.line_spacing = 1.2; 
+                            r.letter_spacing = 0; 
+
+                            // 3. 颜色与描边兼容处理
+                            const finalFg = r.fg_colors || r.font_color;
+                            if (finalFg) r.parsedColor = parseColor(finalFg);
 
                             // 2. 颜色检测 (如接近白色自动加黑边)
                             if (r.parsedColor) {
