@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v17.0.0)</title>
+    <title>MTU 嵌字编辑器 (v17.0.1)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
@@ -134,6 +134,12 @@
                     修复图文件夹 <input type="file" id="repairFolderInput" webkitdirectory directory multiple class="hidden">
                 </label>                
             </div>
+            <label class="bg-red-700 hover:bg-red-600 rounded px-2 py-0.5 cursor-pointer text-white text-[10px] font-bold shadow-lg">
+                <p>一次性</p>
+                <p>批量导入</p>
+                <p>（推荐）</p>
+                <input type="file" id="mtuProjectInput" webkitdirectory directory multiple class="hidden">
+            </label>
         </div>
         
         <div class="flex items-center gap-2 bg-gray-800 px-3 py-1.5 rounded-full border border-gray-700 shadow-sm flex-shrink-0">
@@ -741,6 +747,8 @@
 
         // --- [新增] 顶部工具栏横向滚轮支持 ---
         const topToolbar = document.getElementById('topToolbar');
+
+
 
         // 自动判定横竖排的核心逻辑
         // 根据蓝 line 的物理长宽比自动判定方向
@@ -4112,7 +4120,36 @@
 
 
         
+        // 建议放在 script 标签内 matchAndLoadFiles 函数附近
+        document.getElementById('mtuProjectInput').addEventListener('change', async (e) => {
+            const allFiles = Array.from(e.target.files);
+            
+            // 1. 过滤原图：在根目录且是图片
+            imageFiles = allFiles.filter(f => 
+                /\.(jpg|jpeg|png|webp|bmp)$/i.test(f.name) && 
+                !f.webkitRelativePath.includes('manga_translator_work')
+            );
 
+            // 2. 过滤 JSON：路径包含 /json/
+            jsonFiles = allFiles.filter(f => 
+                f.name.endsWith('.json') && 
+                f.webkitRelativePath.includes('/json/')
+            );
+
+            // 3. 过滤修复图：路径包含 /inpainted/
+            repairFiles = allFiles.filter(f => 
+                /\.(jpg|jpeg|png|webp|bmp)$/i.test(f.name) && 
+                f.webkitRelativePath.includes('/inpainted/')
+            );
+
+            if (imageFiles.length === 0 || jsonFiles.length === 0) {
+                alert("未识别到 MTU 目录结构，请确保选择了包含 'manga_translator_work' 的父文件夹。");
+                return;
+            }
+
+            // 执行自动匹配加载
+            matchAndLoadFiles();
+        });
 
         
         function handleFolderSelect(e, type) {
@@ -4126,6 +4163,8 @@
             
             matchAndLoadFiles();
         }
+
+
 
         // 同时修改 HTML 监听绑定 (约 982 行附近)
         imageFolderInput.addEventListener('change', (e) => handleFolderSelect(e, 'image'));
