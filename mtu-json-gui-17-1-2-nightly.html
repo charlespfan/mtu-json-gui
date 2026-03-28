@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v17.0.1)</title>
+    <title>MTU 嵌字编辑器 (v17.1.2)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
@@ -590,6 +590,7 @@
         let jsonFiles = null;
         let matchedFiles = []; // 存储 {image, jsonName, data}
         let currentFileIndex = -1;
+        let currentProjectName = "MTU_Export"; // 默认导出文件名
         // --- [新增] 多选状态 ---
         let selectedItems = []; // 存储对象格式：{ regionIdx, lineIdx }
         let isShiftMultiSelect = false; // 【新增】用于记录当前是否处于 Shift 多选模式
@@ -634,6 +635,8 @@
 
         // 在脚本开头定义默认值
         let activeDefaultDir = 'v';
+        // --- [新增] 状态变量 ---
+        let currentMaskImage = null; // 存储解码后的蒙版图像
 
 
         // --- 2. 获取 DOM 元素 (统一放在这里，解决初始化顺序问题) ---
@@ -748,7 +751,48 @@
         // --- [新增] 顶部工具栏横向滚轮支持 ---
         const topToolbar = document.getElementById('topToolbar');
 
+        // --- [新增] Base64 转图像工具 ---
+        function loadMaskFromBase64(base64Str) {
+            return new Promise((resolve) => {
+                if (!base64Str) return resolve(null);
+                const img = new Image();
+                img.onload = () => {
+                    // 【关键】加载后立即转换，这样 draw() 函数拿到的就是透明蒙版了
+                    const alphaMask = processMaskToAlpha(img);
+                    alphaMask.onload = () => resolve(alphaMask);
+                };
+                img.onerror = () => resolve(null);
+                img.src = base64Str.startsWith('data:image') ? base64Str : `data:image/png;base64,${base64Str}`;
+            });
+        }
+        // --- [新增] 蒙版黑转透预处理 ---
+        function processMaskToAlpha(maskImg) {
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCanvas.width = maskImg.width;
+            tempCanvas.height = maskImg.height;
+            
+            tempCtx.drawImage(maskImg, 0, 0);
+            const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+            const data = imageData.data;
 
+            for (let i = 0; i < data.length; i += 4) {
+                // 计算亮度 (R+G+B)
+                const brightness = data[i] + data[i+1] + data[i+2];
+                // 如果亮度很低（接近黑色），则将透明度(Alpha)设为 0
+                if (brightness < 30) { 
+                    data[i + 3] = 0; 
+                } else {
+                    // 如果是白色或高亮区域，确保它是完全不透明的
+                    data[i + 3] = 255;
+                }
+            }
+            
+            tempCtx.putImageData(imageData, 0, 0);
+            const finalImg = new Image();
+            finalImg.src = tempCanvas.toDataURL();
+            return finalImg;
+        }
 
         // 自动判定横竖排的核心逻辑
         // 根据蓝 line 的物理长宽比自动判定方向
@@ -1865,6 +1909,16 @@
                 try {
                     const raw = JSON.parse(jsonStr);
                     const data = raw.regions ? raw : raw[Object.keys(raw)[0]];
+                    // --- [插入开始] ---
+                    if (data.mask_raw) {
+                        loadMaskFromBase64(data.mask_raw).then(maskImg => {
+                            currentMaskImage = maskImg;
+                            draw(); 
+                        });
+                    } else {
+                        currentMaskImage = null;
+                    }
+                    // --- [插入结束] ---
                     regions = data.regions || [];
                     regions.forEach(r => {
                         // ... (前面的属性初始化代码保持不变) ...
@@ -2492,18 +2546,41 @@
         }
 
         function draw() {
-            // 【自愈逻辑】：如果 ctx 不小心指偏了，强制纠正回来
             if (ctx !== mainCanvasCtx && !isExporting_logic_running) { 
                 ctx = mainCanvasCtx; 
             }
             if(!ctx) return;
-            
-            // 1. 确定背景底图 (原文模式 vs 译文/修复图模式)
-            let bgImage = (displayMode === 'translation' && currentRepairImage) ? currentRepairImage : currentImage;
-            if(!bgImage) return;
+            if(!currentImage) return;
 
+            // 1. 先画完整的原图
             ctx.clearRect(0, 0, mainCanvas.width, mainCanvas.height); 
-            ctx.drawImage(bgImage, 0, 0);
+            ctx.drawImage(currentImage, 0, 0);
+
+            // 2. 蒙版局部修复逻辑
+            if (displayMode === 'translation' && currentRepairImage) {
+                if (currentMaskImage) {
+                    // --- 使用离屏画布进行“无损”裁剪 ---
+                    const offCanvas = document.createElement('canvas');
+                    offCanvas.width = mainCanvas.width;
+                    offCanvas.height = mainCanvas.height;
+                    const offCtx = offCanvas.getContext('2d');
+
+                    // A. 在离屏画布画出透明蒙版 (白色不透明，黑色透明)
+                    offCtx.drawImage(currentMaskImage, 0, 0);
+                    
+                    // B. 设置合成模式：只在有蒙版的地方画图
+                    offCtx.globalCompositeOperation = 'source-atop';
+                    
+                    // C. 画修复图
+                    offCtx.drawImage(currentRepairImage, 0, 0);
+                    
+                    // D. 将裁剪好的“补丁”整体盖回主画布
+                    ctx.drawImage(offCanvas, 0, 0);
+                } else {
+                    ctx.drawImage(currentRepairImage, 0, 0);
+                }
+            }
+
             
             // --- 【新增：文字层控制】 ---
             // 只有在开启“字”开关时，才渲染复杂的译文或原文文本
@@ -4123,6 +4200,11 @@
         // 建议放在 script 标签内 matchAndLoadFiles 函数附近
         document.getElementById('mtuProjectInput').addEventListener('change', async (e) => {
             const allFiles = Array.from(e.target.files);
+
+            // --- 新增：抓取根文件夹名称 ---
+            if (allFiles.length > 0 && allFiles[0].webkitRelativePath) {
+                currentProjectName = allFiles[0].webkitRelativePath.split('/')[0];
+            }
             
             // 1. 过滤原图：在根目录且是图片
             imageFiles = allFiles.filter(f => 
@@ -4154,6 +4236,14 @@
         
         function handleFolderSelect(e, type) {
             const allFiles = Array.from(e.target.files);
+            
+            // --- 新增：如果是原图或JSON文件夹，尝试更新项目名 ---
+            if (allFiles.length > 0 && allFiles[0].webkitRelativePath) {
+                // 只有当是原图或JSON类型时才更新，避免被修复图文件夹名覆盖（如果名字不一样的话）
+                if (type === 'image' || type === 'json') {
+                    currentProjectName = allFiles[0].webkitRelativePath.split('/')[0];
+                }
+            }
             // 【过滤】只保留根目录文件，防止统计数字爆炸
             const rootFiles = allFiles.filter(f => f.webkitRelativePath.split('/').length === 2);
 
@@ -4262,7 +4352,8 @@
                             image: imgFile, 
                             repairImage: repairMap.get(imgKey) || null, 
                             jsonName: jsonFile.name, 
-                            regions: fileRegions 
+                            regions: fileRegions,
+                            mask_raw: data.mask_raw // [新增] 保存蒙版数据
                         });
                     } catch (err) {
                         console.error("加载文件时发生错误:", err);
@@ -4329,6 +4420,13 @@
         async function loadFile(index) {
             if (index < 0 || index >= matchedFiles.length) return;
             const item = matchedFiles[index];
+            // --- [插入开始] ---
+            if (item.mask_raw) {
+                currentMaskImage = await loadMaskFromBase64(item.mask_raw);
+            } else {
+                currentMaskImage = null;
+            }
+            // --- [插入结束] ---
             
             // 1. 同步 UI 页码显示
             pageInput.value = index + 1;
@@ -4445,6 +4543,7 @@
 
 
         // --- 彻底修复：全量图片导出逻辑 ---
+        // 彻底修复：全量图片导出逻辑 (支持每页蒙版合成)
         async function handleExport() {
             if (matchedFiles.length === 0) { exportImage(); return; }
             const btn = document.getElementById('btnExport');
@@ -4464,46 +4563,75 @@
 
                 for (let i = 0; i < matchedFiles.length; i++) {
                     const item = matchedFiles[i];
+                    
+                    // 1. 加载原图
                     const img = await new Promise((res, rej) => {
                         const t = new Image();
                         t.onload = () => res(t);
                         t.onerror = rej;
-                        t.src = URL.createObjectURL(item.repairImage || item.image);
+                        t.src = URL.createObjectURL(item.image);
                     });
 
                     offCanvas.width = img.width;
                     offCanvas.height = img.height;
+                    
+                    // 绘制第一层：原图
+                    offCtx.clearRect(0, 0, offCanvas.width, offCanvas.height);
                     offCtx.drawImage(img, 0, 0);
 
-                    // 【关键劫持】
+                    // 2. 尝试加载修复图和蒙版
+                    if (item.repairImage) {
+                        const repairImg = await new Promise(res => {
+                            const t = new Image();
+                            t.onload = () => res(t);
+                            t.src = URL.createObjectURL(item.repairImage);
+                        });
+
+                        // 处理该页的蒙版
+                        const pageMask = await loadMaskFromBase64(item.mask_raw);
+                        
+                        if (pageMask) {
+                            const mCanvas = document.createElement('canvas');
+                            mCanvas.width = offCanvas.width;
+                            mCanvas.height = offCanvas.height;
+                            const mCtx = mCanvas.getContext('2d');
+                            mCtx.drawImage(pageMask, 0, 0);
+                            mCtx.globalCompositeOperation = 'source-atop';
+                            mCtx.drawImage(repairImg, 0, 0);
+                            offCtx.drawImage(mCanvas, 0, 0);
+                        } else {
+                            offCtx.drawImage(repairImg, 0, 0);
+                        }
+                        URL.revokeObjectURL(repairImg.src);
+                    }
+
+                    // 3. 绘制文字层
                     ctx = offCtx; 
-                    const savedMode = displayMode;
-                    displayMode = 'translation';
-                    
                     item.regions.forEach(r => drawSmartTranslation(r));
 
-                    displayMode = savedMode;
-                    
                     const imgBlob = await new Promise(r => offCanvas.toBlob(r, 'image/png'));
                     zip.file(`${item.image.name.split('.')[0]}_translated.png`, imgBlob);
+                    
                     URL.revokeObjectURL(img.src);
+                    btn.innerText = `已渲染 ${i+1}/${matchedFiles.length}...`;
                 }
 
                 const content = await zip.generateAsync({ type: "blob" });
                 const link = document.createElement('a');
                 link.href = URL.createObjectURL(content);
-                link.download = `MTU_Batch_${Date.now()}.zip`;
+                // 在 handleExport 函数末尾找到 link.download 的位置
+                // const timestamp = new Date().toISOString().slice(0, 10); // 获取 YYYY-MM-DD
+                link.download = `${currentProjectName}_Exported.zip`; 
                 link.click();
 
             } catch (err) {
                 console.error("导出失败:", err);
                 alert("导出失败: " + err.message);
             } finally {
-                // 【核心修复】：无论如何，强制把画笔还给屏幕！
                 ctx = mainCanvasCtx; 
                 btn.innerText = originalText;
                 btn.disabled = false;
-                draw(); // 立即重绘当前页，确保画面恢复
+                draw(); 
             }
         }
 
@@ -4514,6 +4642,7 @@
         btnExport.onclick = handleExport;
 
         // 后台重建版单图导出（不依赖主画布状态，天生干净）
+        // 后台重建版单图导出（修复蒙版叠加逻辑）
         async function exportCurrentSingleImage() {
             if (!currentImage) return alert("无图片");
             const btn = document.getElementById('btnExportSingle');
@@ -4522,13 +4651,38 @@
             try {
                 const offCanvas = document.createElement('canvas');
                 const offCtx = offCanvas.getContext('2d');
-                const bg = currentRepairImage || currentImage;
-                offCanvas.width = bg.width;
-                offCanvas.height = bg.height;
-                offCtx.drawImage(bg, 0, 0);
+                
+                // 设置画布尺寸
+                offCanvas.width = currentImage.width;
+                offCanvas.height = currentImage.height;
 
-                // 【劫持】
-                ctx = offCtx;
+                // --- 第一层：画原图 ---
+                offCtx.drawImage(currentImage, 0, 0);
+
+                // --- 第二层：蒙版局部修复 (同步预览逻辑) ---
+                if (currentRepairImage) {
+                    if (currentMaskImage) {
+                        const maskCanvas = document.createElement('canvas');
+                        maskCanvas.width = offCanvas.width;
+                        maskCanvas.height = offCanvas.height;
+                        const mCtx = maskCanvas.getContext('2d');
+
+                        // A. 画透明蒙版
+                        mCtx.drawImage(currentMaskImage, 0, 0);
+                        // B. 混合模式裁切
+                        mCtx.globalCompositeOperation = 'source-atop';
+                        mCtx.drawImage(currentRepairImage, 0, 0);
+                        
+                        // 盖回主导出层
+                        offCtx.drawImage(maskCanvas, 0, 0);
+                    } else {
+                        // 如果没蒙版，则全图覆盖（这是旧逻辑的兜底）
+                        offCtx.drawImage(currentRepairImage, 0, 0);
+                    }
+                }
+
+                // --- 第三层：画文字 ---
+                ctx = offCtx; // 劫持全局 ctx 变量指向离屏画布
                 regions.forEach(r => drawSmartTranslation(r));
 
                 const link = document.createElement('a');
@@ -4539,9 +4693,9 @@
                 btn.innerText = "✅ 已导出";
             } catch (err) {
                 console.error(err);
+                alert("导出失败: " + err.message);
             } finally {
-                // 【核心修复】：强制还回画笔
-                ctx = mainCanvasCtx; 
+                ctx = mainCanvasCtx; // 归还画笔
                 setTimeout(() => { btn.innerText = originalText; }, 1000);
                 draw(); 
             }
