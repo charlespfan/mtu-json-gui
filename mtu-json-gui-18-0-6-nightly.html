@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v17.1.2)</title>
+    <title>MTU 嵌字编辑器 (v18.0.6)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
@@ -35,6 +35,11 @@
             cursor: grab; /* 默认手型 */
         }
         canvas { 
+            /* 新增：禁用浏览器层面的缩放平滑 */
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: crisp-edges;
+            image-rendering: pixelated;
             /* 新增：绝对定位，确保 (0,0) 坐标严丝合缝 */
             position: absolute;
             top: 0;
@@ -77,6 +82,20 @@
         .w-12 .rt-btn:hover {
             transform: scale(1.05);
             background-color: #4b5563;
+        }
+
+        /* 蒙版工具专用的激活状态 */
+        .rt-btn.mask-active {
+            background-color: #ef4444 !important; /* 红色 bg-red-600 */
+            color: white !important;
+            border-color: #f87171 !important; /* 亮红边框 */
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.4); /* 增加一点发光感 */
+        }
+
+        /* 激活状态下的悬停：变亮而不是变灰 */
+        .rt-btn.mask-active:hover {
+            background-color: #f87171 !important; /* 亮红色 bg-red-400 */
+            transform: scale(1.1);
         }
     </style>
 </head>
@@ -140,12 +159,16 @@
                 <p>（推荐）</p>
                 <input type="file" id="mtuProjectInput" webkitdirectory directory multiple class="hidden">
             </label>
+            
         </div>
         
         <div class="flex items-center gap-2 bg-gray-800 px-3 py-1.5 rounded-full border border-gray-700 shadow-sm flex-shrink-0">
             <div class="flex flex-col gap-1">
-                <button id="btnExportSingle" class="px-2 py-1 bg-teal-600 hover:bg-teal-500 text-white text-xs rounded">导出单图</button>
-                <button id="btnExport" class="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded">批量导出</button>
+                <button id="btnExportSingle" class="px-2 py-1 bg-teal-600 hover:bg-teal-500 text-white text-xs rounded"><p>导出</p><p>单图</p></button>
+            </div>
+            <div class="flex flex-col gap-1">
+                <button id="btnExportDir" class="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white text-xs rounded">批量导出到文件夹</button>
+                <button id="btnExport" class="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded">批量导出为压缩包</button>
             </div>
             <div class="flex flex-col gap-1">
                 <button onclick="exportCurrentJson()" class="px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white text-xs rounded">导出当前JSON</button>
@@ -155,6 +178,9 @@
             <div class="w-px h-4 bg-gray-600"></div>
             
             <div class="flex items-center gap-3 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
+                <label class="checkbox-label text-xs text-orange-400 flex items-center gap-1 cursor-pointer" title="全图修复：不理会蒙版数据，强制显示完整的修复图">
+                    <input type="checkbox" id="ignoreMaskForRepairCb" class="accent-orange-600">全图修复
+                </label>
                 <label class="checkbox-label text-xs text-gray-300 flex items-center gap-1 cursor-pointer">
                     <input type="checkbox" id="showBlocksCb" class="accent-blue-600" checked>总框
                 </label>
@@ -164,6 +190,17 @@
                 <label class="checkbox-label text-xs text-gray-300 flex items-center gap-1 cursor-pointer">
                     <input type="checkbox" id="showTextCb" class="accent-yellow-600" checked>文字
                 </label>
+                <label class="checkbox-label text-xs text-gray-300 flex items-center gap-1 cursor-pointer">
+                    <input type="checkbox" id="showMaskCb" class="accent-red-600">显蒙
+                </label>
+                <div class="flex flex-col items-center ml-2 border-l border-gray-700 pl-2">
+                    <span class="text-[9px] text-gray-400">修复层透明度</span>
+                    <div class="flex items-center gap-2">
+                        <input type="range" id="repairOpacityRange" min="0" max="1" step="0.01" value="1" 
+                            class="w-16 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600">
+                        <span id="repairOpacityValue" class="text-[9px] text-gray-500 w-6">100%</span>
+                    </div>
+                </div>
             </div>
             <div class="w-px h-4 bg-gray-600"></div>
             <div class="flex bg-gray-700 rounded p-0.5">
@@ -221,7 +258,7 @@
             <div class="flex flex-col">
                 <span class="text-[9px] text-gray-400 uppercase tracking-wider font-bold text-yellow-500">字号</span>
                 <div class="flex gap-1">
-                    <input type="number" id="fontSizeInput" disabled step="0.5" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 w-12 h-6 text-center focus:border-yellow-500 transition-colors" placeholder="-">
+                    <input type="number" id="fontSizeInput" disabled step="1" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 w-12 h-6 text-center focus:border-yellow-500 transition-colors" placeholder="-">
                     <button onclick="applyAutoFontSize()" class="bg-yellow-600 hover:bg-yellow-500 text-white text-[10px] rounded px-1 flex items-center justify-center border border-yellow-700 w-6 h-6" title="单页自动字号">
                         自
                     </button>
@@ -473,6 +510,7 @@
         </div>
         <div class="flex-grow overflow-auto relative p-8" id="canvasContainer">
             <canvas id="mainCanvas"></canvas>
+            <canvas id="uiCanvas" class="absolute top-0 left-0 pointer-events-none z-20"></canvas>
         </div>
         <div class="w-12 bg-gray-900 border-l border-gray-700 flex flex-col items-center py-3 gap-3 z-10 shadow-xl overflow-y-auto">
                 <div class="flex flex-col gap-2">
@@ -556,6 +594,20 @@
                         class="hidden absolute right-14 top-2/3 bg-blue-600 text-white text-[10px] p-2 rounded shadow-xl whitespace-nowrap border border-blue-400 z-50">
                     确认修改选中色
                 </button>
+                <div class="w-8 h-px bg-gray-700 mx-auto"></div>
+                <div class="flex flex-col gap-2">
+                    <button id="maskBrushBtn" class="rt-btn" title="蒙版画笔 (右键画，中键擦)">🖌️</button>
+                    <button id="maskEraserBtn" class="rt-btn" title="蒙版橡皮 (右键擦，中键画)">🧽</button>
+                </div>
+                <div class="w-8 h-px bg-gray-700 mx-auto"></div>
+                <div class="flex flex-col gap-2">
+                    <button id="paintBrushBtn" class="rt-btn" title="自由涂鸦 (右键画，中键擦)">🖌️</button>
+                    <button id="paintColorBtn" class="rt-btn" style="background-color: #ffffff; color: #000;" 
+                            onclick="document.getElementById('paintColorPicker').click()">色</button>
+                    <input type="color" id="paintColorPicker" value="#ffffff" class="hidden">
+                    <button id="paintEraserBtn" class="rt-btn" title="涂鸦橡皮 (右键擦，中键画)">🧹</button>
+                    <button id="comboModeBtn" class="rt-btn text-purple-400 border-purple-500/30" title="混合模式：右键自由涂鸦，中键蒙版橡皮">混</button>
+                </div>
                 <div class="mt-auto mb-2 flex flex-col items-center gap-2">
                     <div class="w-8 h-px bg-gray-700 mx-auto mb-1"></div>
                     <a href="https://github.com/charlespfan/mtu-json-gui" 
@@ -590,7 +642,8 @@
         let jsonFiles = null;
         let matchedFiles = []; // 存储 {image, jsonName, data}
         let currentFileIndex = -1;
-        let currentProjectName = "MTU_Export"; // 默认导出文件名
+        // 在文件顶部定义
+        let currentProjectName = "MTU_Project";
         // --- [新增] 多选状态 ---
         let selectedItems = []; // 存储对象格式：{ regionIdx, lineIdx }
         let isShiftMultiSelect = false; // 【新增】用于记录当前是否处于 Shift 多选模式
@@ -637,6 +690,42 @@
         let activeDefaultDir = 'v';
         // --- [新增] 状态变量 ---
         let currentMaskImage = null; // 存储解码后的蒙版图像
+        // --- 蒙版编辑相关变量 ---
+        let showMask = false;       // <--- 新增：控制红色层显示
+        let maskEditMode = 'none'; // <--- 新增：蒙版编辑模式 ('brush', 'eraser', 'none')
+        let maskBrushSize = 35;    // <--- 新增：笔触大小
+
+        let isMaskDragging = false; // [新增] 专门记录蒙版涂抹状态
+        // 1. 在变量定义区添加
+        let currentMaskOp = 'none'; // 记录当前这一笔的动作：'brush' 或 'eraser'
+        let currentMousePos = { x: 0, y: 0 }; // [新增] 记录鼠标实时画布坐标
+        // --- 涂鸦功能专用变量 ---
+        let paintMode = 'none'; // 'brush', 'eraser', 'none'
+        let activePaintColor = '#ffffff'; // 默认白色
+        let showRawUnderTrans = false; // 是否在译文模式显示原图
+        let repairOpacity = 1.0; // 默认完全不透明
+        // 新增：用于记录鼠标在 UI 容器层面的实时坐标，供键盘缩放时使用
+        let lastUIX = 0;
+        let lastUIY = 0;
+
+        let ignoreMaskForRepair = false; // 默认不开启
+
+  
+        let comboMode = false;      // [新增] 混合模式状态
+        let comboActiveTool = 'none'; // [新增] 记录当前使用的是涂鸦还是蒙版
+
+
+        const uiCanvas = document.getElementById('uiCanvas');
+        const uiCtx = uiCanvas.getContext('2d');
+
+
+        const paintCanvas = document.createElement('canvas');
+        const paintCtx = paintCanvas.getContext('2d');
+        // 创建持久化的离屏蒙版画布
+        const maskCanvas = document.createElement('canvas');
+        const maskCtx = maskCanvas.getContext('2d');
+
+
 
 
         // --- 2. 获取 DOM 元素 (统一放在这里，解决初始化顺序问题) ---
@@ -751,6 +840,51 @@
         // --- [新增] 顶部工具栏横向滚轮支持 ---
         const topToolbar = document.getElementById('topToolbar');
 
+        const repairOpacityRange = document.getElementById('repairOpacityRange');
+        const repairOpacityValue = document.getElementById('repairOpacityValue');
+
+
+
+        if (repairOpacityRange) {
+            repairOpacityRange.addEventListener('input', (e) => {
+                repairOpacity = parseFloat(e.target.value);
+                // 更新百分比文字显示
+                if (repairOpacityValue) {
+                    repairOpacityValue.textContent = Math.round(repairOpacity * 100) + '%';
+                }
+                draw(); // 触发画布重绘
+            });
+        }
+
+        // --- 初始化逻辑绑定 ---
+        document.getElementById('ignoreMaskForRepairCb').addEventListener('change', (e) => {
+            ignoreMaskForRepair = e.target.checked;
+            draw(); // 切换后立即重绘画布预览
+        });
+
+        // 将 Base64 蒙版载入离屏画布
+        async function loadMaskToCanvas(base64) {
+            if (!base64) {
+                maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+                return;
+            }
+            const img = await loadMaskFromBase64(base64); 
+            maskCanvas.width = img.width;
+            maskCanvas.height = img.height;
+            maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+            maskCtx.drawImage(img, 0, 0);
+        }
+
+        // 同步当前编辑的蒙版到内存数据中
+        function syncMaskData() {
+            // 将离屏画布转为 Base64（不带 DataURL 头，仅内容）
+            const base64 = maskCanvas.toDataURL('image/png').split(',')[1];
+            if (matchedFiles[currentFileIndex]) {
+                matchedFiles[currentFileIndex].mask_raw = base64;
+            }
+        }
+
+
         // --- [新增] Base64 转图像工具 ---
         function loadMaskFromBase64(base64Str) {
             return new Promise((resolve) => {
@@ -792,6 +926,27 @@
             const finalImg = new Image();
             finalImg.src = tempCanvas.toDataURL();
             return finalImg;
+        }
+
+        function handlePaint(pos, op) {
+            if (op === 'none' || paintCanvas.width === 0) return;
+            
+            paintCtx.save();
+            // 根据操作切换：brush 用颜色，eraser 用透明模式
+            if (op === 'brush') {
+                paintCtx.globalCompositeOperation = 'source-over';
+                paintCtx.fillStyle = activePaintColor; 
+            } else {
+                paintCtx.globalCompositeOperation = 'destination-out';
+            }
+            
+            paintCtx.beginPath();
+            const radius = maskBrushSize / viewState.scale;
+            paintCtx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+            paintCtx.fill();
+            paintCtx.restore();
+            
+            draw(); 
         }
 
         // 自动判定横竖排的核心逻辑
@@ -956,66 +1111,60 @@
             const isBatch = matchedFiles.length > 0;
             const scope = isBatch ? `全书 (${matchedFiles.length}页)` : "当前页";
             
-            if (!confirm(`确定要对 ${scope} 执行一键全自动处理吗？\n(包含：Angle 规则替换 + 自动字号 + 自动行距)`)) return;
+            if (!confirm(`确定要对 ${scope} 执行一键全自动处理吗？`)) return;
+
+            // 【关键】无论何时，先暂存当前屏幕上的涂鸦
+            const currentPaintData = paintCanvas.toDataURL();
 
             if (isBatch) {
-                // 1. 【关键：先保存】
-                // 必须先将当前屏幕上（regions 变量里）的最新改动同步到内存数组中，
-                // 否则后续的文本替换和自动字号会基于旧数据操作。
+                // 保存当前页数据到内存
                 if (matchedFiles[currentFileIndex]) {
                     matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
+                    matchedFiles[currentFileIndex].paint_raw = currentPaintData;
                 }
 
-                // 2. 【执行“替”】
-                // 此时 applyOriginalTextReplacement 会修改内存中所有页（包含刚刚保存的当前页）的文本。
-                applyOriginalTextReplacement();
-
-                // 3. 【执行“自”】
-                // 遍历内存中的所有文件，基于“替换后”的干净文本计算字号和行距。
+                // 批量修改内存数据
                 matchedFiles.forEach(fileItem => {
                     fileItem.regions.forEach(r => {
+                        // 执行原文替换规则
+                        if (r.texts) {
+                            r.texts = r.texts.map(text => {
+                                let newText = text;
+                                replacements.forEach(([find, replace]) => {
+                                    while (newText.includes(find)) newText = newText.replace(find, replace);
+                                });
+                                return newText;
+                            });
+                        }
+                        // 计算自动排版
                         const autoSize = calculateAutoFontSizeForRegion(r);
                         r.font_size = autoSize;
                         r.line_spacing = calculateAutoLineSpacing(r, autoSize);
                     });
                 });
                 
-                // 4. 【刷新 UI】
-                // 重新加载当前页，确保画面和侧边栏显示的是替换并计算后的最终结果。
-                loadFile(currentFileIndex); 
+                // 重新加载当前页（利用修复后的 loadFile 自动还原涂鸦）
+                await loadFile(currentFileIndex); 
             } else {
-                // --- 单 JSON 模式逻辑 ---
-                if (regions.length === 0) {
-                    alert("未检测到有效的区域数据。");
-                    return;
-                }
-
-                // 1. 先执行文本替换
-                applyOriginalTextReplacement();
-                
-                // 2. 为当前页所有框执行自动排版优化
+                // 单 JSON 模式
+                applyOriginalTextReplacement(); 
                 regions.forEach(r => {
                     const autoSize = calculateAutoFontSizeForRegion(r);
                     r.font_size = autoSize;
                     r.line_spacing = calculateAutoLineSpacing(r, autoSize);
                 });
                 
-                // 3. 同步更新原文编辑框的显示内容
-                if (activeRegionIndex !== -1) {
-                    document.getElementById('origEditArea').value = regions[activeRegionIndex].texts.join('\n');
-                }
+                // 手动把刚才存的涂鸦画回去（因为单图模式没走 loadFile）
+                const pImg = new Image();
+                pImg.onload = () => { paintCtx.drawImage(pImg, 0, 0); draw(); };
+                pImg.src = currentPaintData;
                 
-                // 4. 重绘画布
                 draw(); 
             }
 
-            // 5. 视觉反馈逻辑（保持不变）
+            // 按钮反馈
             batchProcessBtnRight.innerText = "OK!";
-            batchProcessBtnRight.classList.add('text-green-400', 'border-green-500');
-            setTimeout(() => {
-                batchProcessBtnRight.innerText = "一";
-                batchProcessBtnRight.classList.remove('text-green-400', 'border-green-500');
-            }, 1500);
+            setTimeout(() => { batchProcessBtnRight.innerText = "一"; }, 1500);
         };
 
         // --- 3. 绑定监听 (使用 change 事件) ---
@@ -1558,6 +1707,8 @@
         // --- [修改后] 核心事件监听：兼容划线多选与原版功能 ---
 
         // --- [修改后] 核心事件监听 ---
+        // 禁止画布上的右键默认菜单
+        mainCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
         mainCanvas.addEventListener('mousedown', (e) => {
             // 使用你代码中原有的坐标转换函数
@@ -1574,7 +1725,38 @@
             }
         });
 
+        // 修改后的 mainCanvas 鼠标移动监听
         mainCanvas.addEventListener('mousemove', (e) => {
+            // 1. 始终渲染 UI 圆圈（笔刷预览）
+            renderUI(e);
+
+            // 2. 如果正在进行涂鸦或蒙版操作，直接交给 onMouseMove 处理并拦截
+            if (isMaskDragging) {
+                onMouseMove(e);
+                return;
+            }
+
+            // 2. 如果正在平移画布（Space+左键），执行平移并拦截
+            if (viewState.isPanning) {
+                const dx = e.clientX - viewState.startX; 
+                const dy = e.clientY - viewState.startY;
+                viewState.x += dx; 
+                viewState.y += dy;
+                viewState.startX = e.clientX; 
+                viewState.startY = e.clientY;
+                updateCanvasTransform(); 
+                return;
+            }
+
+            // 3. 【重点】如果在蒙版模式，但并没有在涂抹（没按右键/中键），也没在平移
+            // 此时我们只需要重绘圆圈指针，但绝对不能 return！
+            // 这样代码才能继续往下运行到 transformState.dragging 的逻辑
+            if (maskEditMode !== 'none') {
+                document.getElementById('canvasContainer').style.cursor = 'crosshair';
+                draw(); 
+                // 不要 return;
+            }
+
             if (isAltSelecting) {
                 const pos = getMousePos(e); // 同样使用原有的转换
                 altSelectionPath.push(pos);
@@ -1599,6 +1781,22 @@
         });
 
         window.addEventListener('mouseup', (e) => {
+
+            if (isMaskDragging) {
+                isMaskDragging = false;
+                currentMaskOp = 'none';
+                comboActiveTool = 'none'; // [新增] 重置混合工具标记
+                syncMaskData(); 
+                draw();
+                return;
+            }
+            
+            if (viewState.isPanning) {
+                viewState.isPanning = false;
+                document.getElementById('canvasContainer').style.cursor = (maskEditMode !== 'none') ? 'crosshair' : 'grab';
+                return;
+            }
+            
             if (isAltSelecting) {
                 isAltSelecting = false;
                 // 划线结束，开启 Shift 模式标记以维持高亮显示
@@ -1630,7 +1828,7 @@
             const zoom = Math.exp(wheel * zoomIntensity);
             
             // 限制缩放范围 (0.1倍 到 10倍)
-            const newScale = Math.max(0.1, Math.min(10, viewState.scale * zoom));
+            const newScale = Math.max(0.1, Math.min(100, viewState.scale * zoom));
             
             // 计算新的偏移量，使得鼠标指向的点位置不变 (Zoom towards mouse)
             viewState.x = mouseX - (mouseX - viewState.x) * (newScale / viewState.scale);
@@ -1638,6 +1836,8 @@
             viewState.scale = newScale;
 
             updateCanvasTransform();
+            // 【新增】缩放时手动触发 UI 重绘，让圆圈跟着缩放
+            renderUI(); 
         }, { passive: false });
 
         const autoTcyCb = document.getElementById('autoTcyCb');
@@ -1910,26 +2110,65 @@
                     const raw = JSON.parse(jsonStr);
                     const data = raw.regions ? raw : raw[Object.keys(raw)[0]];
                     // --- [插入开始] ---
+                    // 1. 原有的蒙版加载逻辑 (保持)
                     if (data.mask_raw) {
                         loadMaskFromBase64(data.mask_raw).then(maskImg => {
                             currentMaskImage = maskImg;
+                            
+                            // 【关键修复】：将加载的蒙版图片同步到离屏画布中
+                            if (maskImg) {
+                                maskCanvas.width = maskImg.width;
+                                maskCanvas.height = maskImg.height;
+                                maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+                                maskCtx.drawImage(maskImg, 0, 0);
+                            } else {
+                                maskCanvas.width = 0;
+                                maskCanvas.height = 0;
+                            }
+                            
                             draw(); 
                         });
                     } else {
                         currentMaskImage = null;
+                        maskCanvas.width = 0; 
+                        maskCanvas.height = 0;
                     }
+
+                    // 2. 【新增】涂鸦加载逻辑
+                    if (data.paint_raw) {
+                        const pImg = new Image();
+                        pImg.onload = () => {
+                            paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+                            paintCtx.drawImage(pImg, 0, 0);
+                            draw();
+                        };
+                        pImg.src = data.paint_raw;
+                    } else {
+                        paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+                    }
+
                     // --- [插入结束] ---
+                    // 找到 handleJsonUpload 内部遍历 regions 的地方
                     regions = data.regions || [];
                     regions.forEach(r => {
-                        // ... (前面的属性初始化代码保持不变) ...
-                        // 1. 方向归一化
+                        // 基础属性归一化
                         if (r.direction === 'vertical') r.direction = 'v';
                         if (r.direction === 'horizontal') r.direction = 'h';
-                        
-                        // 2. 【核心修改】强制设定行间距和字间距，不接受 JSON 里的值
-                        r.line_spacing = 1.2;   // 强制设为你自己的默认行距
-                        r.letter_spacing = 0;   // 强制设为你自己的默认字距
+                        // 【核心新增】：导入时立即对字号取整
+                        r.font_size = Math.round(r.font_size || 20);
 
+                        r.line_spacing = 1.2;
+                        r.letter_spacing = 0;
+
+                        // 【核心修复】：如果 JSON 里已经有了 box 和 angle，直接信任它们，不要重新计算
+                        if (r.box && Array.isArray(r.box) && r.box.length === 4 && r.angle !== undefined) {
+                            console.log("单文件导入：检测到精修坐标，保持解耦状态。");
+                        } else {
+                            // 只有原始 JSON（没有大框数据）才需要初始化
+                            restoreLinesFromCenter(r); 
+                            initRegionBox(r); 
+                        }
+                        
                         // 3. 颜色归一化：兼容 "fg_colors" 与 "font_color"
                         const finalFg = r.fg_colors || r.font_color;
                         if (finalFg) r.parsedColor = parseColor(finalFg);
@@ -1956,8 +2195,7 @@
                             // 【新增】自动清洗译文
                             r.translation = cleanTranslationText(r.translation);
                         }
-                        restoreLinesFromCenter(r); // 还原坐标
-                        initRegionBox(r); // 计算包围盒
+
                     });
 
                     // ❌ 删除这一行： renderSidebar(); 
@@ -2078,6 +2316,52 @@
 
         function onMouseDown(e) {
             const pos = getMousePos(e); 
+            // --- [新增] 混合模式按下逻辑 ---
+            if (comboMode && (e.button === 2 || e.button === 1)) {
+                isMaskDragging = true;
+                if (e.button === 2) {
+                    // 右键：仅执行自由涂抹
+                    comboActiveTool = 'paint';
+                    currentMaskOp = 'brush';
+                    handlePaint(pos, 'brush');
+                } else if (e.button === 1) {
+                    // 中键：仅执行蒙版橡皮
+                    comboActiveTool = 'mask';
+                    currentMaskOp = 'eraser';
+                    handleMaskPaint(pos, 'eraser');
+                }
+                return; // 关键：拦截后续逻辑，防止“同时画出”两个东西
+            }
+
+            if (paintMode !== 'none') {
+                if (e.button === 2 || e.button === 1) { // 右键或中键
+                    isMaskDragging = true;
+                    // 如果当前是画笔模式：右键画(brush)，中键擦(eraser)
+                    // 如果当前是橡皮模式：右键擦(eraser)，中键画(brush)
+                    if (paintMode === 'brush') {
+                        currentMaskOp = (e.button === 2) ? 'brush' : 'eraser';
+                    } else {
+                        currentMaskOp = (e.button === 2) ? 'eraser' : 'brush';
+                    }
+                    handlePaint(pos, currentMaskOp);
+                    return;
+                }
+            }
+
+            if (maskEditMode !== 'none') {
+                // 右键 (2) 和 中键 (1) 负责蒙版
+                if (e.button === 2 || e.button === 1) {
+                    isMaskDragging = true;
+                    if (maskEditMode === 'brush') {
+                        currentMaskOp = (e.button === 2) ? 'brush' : 'eraser';
+                    } else {
+                        currentMaskOp = (e.button === 2) ? 'eraser' : 'brush';
+                    }
+                    handleMaskPaint(pos, currentMaskOp);
+                    return; // 拦截右键和中键，不让它们触发选框
+                }
+                // 如果是左键 (0)，逻辑会继续向下跑，不被拦截
+            }
 
             if (isDrawingMode) {
                 drawStartPos = pos;
@@ -2224,6 +2508,30 @@
             const pos = getMousePos(e);
             let cursor = 'default';
 
+            if (isMaskDragging) {
+                if (comboMode) {
+                    // 混合模式：根据按下时确定的工具（comboActiveTool）执行唯一操作
+                    if (comboActiveTool === 'paint') {
+                        handlePaint(pos, 'brush');
+                    } else if (comboActiveTool === 'mask') {
+                        handleMaskPaint(pos, 'eraser');
+                    }
+                } else if (paintMode !== 'none') {
+                    handlePaint(pos, currentMaskOp);
+                } else if (maskEditMode !== 'none') {
+                    handleMaskPaint(pos, currentMaskOp);
+                }
+                return; 
+            }
+
+            // 在 1667 行左右，如果是混合模式，也需要记录鼠标位置并渲染 UI 圆圈
+            if (maskEditMode !== 'none' || paintMode !== 'none' || comboMode) {
+                mainCanvas.style.cursor = 'crosshair';
+                currentMousePos = pos; 
+                renderUI(); 
+                return; 
+            }
+
             if (isDrawingMode && drawStartPos) {
                 tempDrawRect.w = pos.x - drawStartPos.x;
                 tempDrawRect.h = pos.y - drawStartPos.y;
@@ -2350,7 +2658,27 @@
             mainCanvas.style.cursor = cursor;
         }
         
-
+        // 蒙版涂抹核心函数
+        // 修改 handleMaskPaint 和 handlePaint 内部
+        function handleMaskPaint(pos, op) {
+            if (op === 'none') return;
+            
+            maskCtx.save();
+            maskCtx.globalCompositeOperation = (op === 'brush') ? 'source-over' : 'destination-out';
+            
+            maskCtx.beginPath();
+            // --- 【修改点】在这里除以缩放比例 ---
+            // 只有这样，画在原始图像上的半径才能在视觉上对齐屏幕上的 UI 圆圈
+            const radius = maskBrushSize / viewState.scale;
+            
+            maskCtx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+            maskCtx.fillStyle = 'white'; 
+            maskCtx.fill();
+            maskCtx.restore();
+            
+            draw(); 
+        }
+        
         // 1. 点击自定义方块 -> 触发原生选择器
         btnFillColor.addEventListener('click', () => {
             // [关键修改] 打开前，先记下当前选中的是谁（或者是 -1）
@@ -2476,6 +2804,15 @@
 
 
         function onMouseUp() {
+            // --- 新增：停止蒙版涂抹 ---
+            if (isMaskDragging) {
+                isMaskDragging = false;
+                currentMaskOp = 'none';
+                comboActiveTool = 'none'; // [新增] 重置混合工具标记
+                syncMaskData(); 
+                draw();
+                return;
+            }
             // 【关键修改点】：结束绘制并自动退出模式
             if (isDrawingMode && drawStartPos && tempDrawRect) {
                 if (Math.abs(tempDrawRect.w) > 5 && Math.abs(tempDrawRect.h) > 5) {
@@ -2552,36 +2889,65 @@
             if(!ctx) return;
             if(!currentImage) return;
 
-            // 1. 先画完整的原图
+            // --- 核心新增：锁定实际像素显示，禁用抗锯齿 ---
+            ctx.imageSmoothingEnabled = false;
+            ctx.mozImageSmoothingEnabled = false;
+            ctx.webkitImageSmoothingEnabled = false;
+            ctx.msImageSmoothingEnabled = false;
+
+            // 1. 底层：原图
             ctx.clearRect(0, 0, mainCanvas.width, mainCanvas.height); 
             ctx.drawImage(currentImage, 0, 0);
 
-            // 2. 蒙版局部修复逻辑
+            // 2. 中层：渲染修复图 (被蒙版裁剪后的部分)
+            // 2. 中层：渲染修复图 (被蒙版裁剪后的部分)
+            // 2. 中层：渲染修复图
             if (displayMode === 'translation' && currentRepairImage) {
-                if (currentMaskImage) {
-                    // --- 使用离屏画布进行“无损”裁剪 ---
-                    const offCanvas = document.createElement('canvas');
-                    offCanvas.width = mainCanvas.width;
-                    offCanvas.height = mainCanvas.height;
-                    const offCtx = offCanvas.getContext('2d');
+                ctx.save();
+                ctx.globalAlpha = repairOpacity; 
 
-                    // A. 在离屏画布画出透明蒙版 (白色不透明，黑色透明)
-                    offCtx.drawImage(currentMaskImage, 0, 0);
-                    
-                    // B. 设置合成模式：只在有蒙版的地方画图
-                    offCtx.globalCompositeOperation = 'source-atop';
-                    
-                    // C. 画修复图
-                    offCtx.drawImage(currentRepairImage, 0, 0);
-                    
-                    // D. 将裁剪好的“补丁”整体盖回主画布
-                    ctx.drawImage(offCanvas, 0, 0);
-                } else {
-                    ctx.drawImage(currentRepairImage, 0, 0);
+                if (ignoreMaskForRepair) {
+                    // --- 【新增】全图模式：直接绘制完整修复图，不进行蒙版裁剪 ---
+                    ctx.drawImage(currentRepairImage, 0, 0, mainCanvas.width, mainCanvas.height);
+                } else if (maskCanvas.width > 0) {
+                    // 原有的蒙版裁剪模式
+                    const off = document.createElement('canvas');
+                    off.width = mainCanvas.width; 
+                    off.height = mainCanvas.height;
+                    const oCtx = off.getContext('2d');
+                    oCtx.drawImage(maskCanvas, 0, 0, off.width, off.height); 
+                    oCtx.globalCompositeOperation = 'source-atop';
+                    oCtx.drawImage(currentRepairImage, 0, 0, off.width, off.height);
+                    ctx.drawImage(off, 0, 0);
                 }
+                
+                ctx.restore();
             }
 
-            
+            // --- 3. 关键层：半透明红色可视化层 ---
+            // 这个就是你问的“在哪里”的那一层，它画在修复图之上，方便你改
+            if (showMask && maskCanvas.width > 0) {
+                ctx.save();
+                ctx.globalAlpha = 0.3; // 不透明度
+                
+                const maskOverlay = document.createElement('canvas');
+                maskOverlay.width = maskCanvas.width; maskOverlay.height = maskCanvas.height;
+                const moCtx = maskOverlay.getContext('2d');
+                
+                moCtx.fillStyle = '#ff0000'; // 纯红
+                moCtx.fillRect(0, 0, maskOverlay.width, maskOverlay.height);
+                moCtx.globalCompositeOperation = 'destination-in';
+                moCtx.drawImage(maskCanvas, 0, 0); // 只在有蒙版的地方涂红
+                
+                ctx.drawImage(maskOverlay, 0, 0);
+                ctx.restore();
+            }
+
+            // 4. 绘制涂鸦层 (Paint Layer)
+            if (paintCanvas.width > 0) {
+                ctx.drawImage(paintCanvas, 0, 0);
+            }
+
             // --- 【新增：文字层控制】 ---
             // 只有在开启“字”开关时，才渲染复杂的译文或原文文本
             if (showText) {
@@ -2616,7 +2982,8 @@
                     });
                 }
 
-                if (r.lines && (showLines || active)) {
+                // 修改后：去掉 || active，使其严格受全局开关控制
+                if (r.lines && showLines) {
                     r.lines.forEach((line, lIdx) => {
                         ctx.save();
                         
@@ -2745,11 +3112,13 @@
 
                 // --- 【B. 总框渲染 (Big Blocks)】 ---
                 // 逻辑：开启“总”开关，或者该区域是选中的，才画外壳大框
-                if (r.box && (showBlocks || active)) {
+                // 修改后：去掉 || active，选中时也不再强制画线
+                if (r.box && showBlocks) {
                     
                     drawAngleBox(r, active); 
                     
                     // 只有开启“总”开关，才显示 #1, #2 这种编号标签
+                    // 修改后：只有当全局开关开启，且没有正在平移/拖拽时才显示标签，进一步减少干扰
                     if (showBlocks) {
                         drawBoxLabels(r, i, active); 
                     }
@@ -2804,8 +3173,44 @@
                 ctx.strokeRect(tempDrawRect.x, tempDrawRect.y, tempDrawRect.w, tempDrawRect.h);
                 ctx.restore();
             }
+
         }
 
+        function renderUI(e) {
+            // 1. 清空 UI 层
+            uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+
+            // [修改] 增加 comboMode 的判定，确保混合模式下也显示圆圈
+            if (maskEditMode === 'none' && paintMode === 'none' && !comboMode) return;
+
+            if (e) {
+                const rect = uiCanvas.getBoundingClientRect();
+                lastUIX = e.clientX - rect.left;
+                lastUIY = e.clientY - rect.top;
+            }
+
+            uiCtx.save();
+            uiCtx.beginPath();
+            
+            // 使用当前的笔触大小
+            const radius = maskBrushSize; 
+            
+            uiCtx.arc(lastUIX, lastUIY, radius, 0, Math.PI * 2);
+            
+            // 绘制样式
+            // --- 修改这里：加粗外层白边 ---
+            uiCtx.strokeStyle = 'rgba(255, 255, 255, 0.9)'; 
+            uiCtx.lineWidth = 3.5; // 从 2 改为 3.5，甚至可以到 4
+            uiCtx.stroke();
+            
+            // --- 修改这里：加粗内层/底层黑边 (阴影) ---
+            uiCtx.strokeStyle = 'rgba(0, 0, 0, 0.7)'; 
+            uiCtx.lineWidth = 1.5; // 从 1 改为 1.5
+            uiCtx.stroke();
+            
+            uiCtx.restore();
+        }
+        
         function drawBoxLabels(region, index, isActive) {
             const [x1, y1, x2, y2] = region.box; const w = x2 - x1, h = y2 - y1;
             const cx = x1 + w/2, cy = y1 + h/2;
@@ -2819,7 +3224,7 @@
             ctx.font = `bold ${labelFontSize}px sans-serif`;
             
             const angleText = (Math.abs(region.angle) > 0.1) ? ` A:${Math.round(region.angle)}°` : '';
-            const sizeText = `Sz:${regionFontSize.toFixed(1)}`;
+            const sizeText = `Sz:${Math.round(regionFontSize)}`;
             const labelText = `#${index+1} ${sizeText}${angleText}`;
             
             const padding = 3; 
@@ -2865,8 +3270,11 @@
         function drawHandles(region) {
             const handles = getRegionHandles(region);
             const rad = region.angle * Math.PI / 180;
-
             handles.forEach(h => {
+                // 【新增逻辑】：如果全局“总框”开关关闭，则不渲染索引为 0, 1, 2, 3 的角点
+                // 索引 0-3 是四个角，4-7 是四条边的中点
+                if (!showBlocks && h.index !== undefined && h.index >= 4 && h.index <= 7) return;
+
                 ctx.save();
                 ctx.translate(h.x, h.y); 
                 
@@ -3312,68 +3720,65 @@
                 }
 
                 // 定义内部绘制工具，增加 currentFs 参数，默认为基准字号
+                // 找到 executeDraw 定义，修改如下：
                 const executeDraw = (char, dx, dy, tokStyle, dotX = null, dotY = null, currentFs = baseFontSize) => {
+                    // 对基础坐标进行四舍五入
+                    const rdx = Math.round(dx);
+                    const rdy = Math.round(dy);
+                    
                     const blurRatio = region.blurSizeRatio || 0.1;
                     const blurPx = currentFs * blurRatio; 
 
-                    // --- [模式1：发光层] ---
                     if (isGlow) {
                         ctx.save();
-                        // 动态根据当前字号设置滤镜和描边宽度
                         ctx.filter = `blur(${blurPx}px)`; 
                         ctx.strokeStyle = region.blurColor || "#000000";
                         ctx.lineWidth = currentFs * 0.1 + (blurPx * 2); 
-                        ctx.strokeText(char, dx, dy); 
+                        // 使用四舍五入后的坐标
+                        ctx.strokeText(char, rdx, rdy); 
                         
-                        // 发光层着重号
                         if (tokStyle.dot && dotX !== null && dotY !== null) {
                             ctx.beginPath();
-                            ctx.arc(dotX, dotY, currentFs * 0.1, 0, Math.PI * 2);
+                            ctx.arc(Math.round(dotX), Math.round(dotY), currentFs * 0.1, 0, Math.PI * 2);
                             ctx.stroke();
                         }
                         ctx.restore();
                     } 
-                    // --- [模式2：普通描边/填孔层] ---
                     else if (isStroke) {
                         ctx.save();
                         ctx.filter = 'none';
                         ctx.strokeStyle = finalStrokeColor;
                         
-                        // 1. 绘制文字描边
                         if (useConcentricFill) {
                             const maxW = currentFs * finalStrokeWidthRatio;
                             const step = Math.max(0.5, currentFs * 0.05);
                             for (let w = maxW; w > 0; w -= step) { 
                                 ctx.lineWidth = w; 
-                                ctx.strokeText(char, dx, dy); 
+                                ctx.strokeText(char, rdx, rdy); 
                             }
-                            ctx.fillText(char, dx, dy);
+                            ctx.fillText(char, rdx, rdy);
                         } else {
                             ctx.lineWidth = currentFs * finalStrokeWidthRatio;
-                            ctx.strokeText(char, dx, dy);
+                            ctx.strokeText(char, rdx, rdy);
                         }
 
-                        // 2. 【核心修复】：补上着重号的描边逻辑
                         if (tokStyle.dot && dotX !== null && dotY !== null) {
                             ctx.beginPath();
-                            // 半径保持与 isFill 一致 (currentFs * 0.1)
-                            ctx.arc(dotX, dotY, currentFs * 0.1, 0, Math.PI * 2);
-                            // 使用当前设定的描边宽度
+                            ctx.arc(Math.round(dotX), Math.round(dotY), currentFs * 0.1, 0, Math.PI * 2);
                             ctx.lineWidth = currentFs * finalStrokeWidthRatio;
                             ctx.stroke();
                         }
                         ctx.restore();
                     }
-                    // --- [模式3：核心填充层] ---
                     else if (isFill) {
                         ctx.save();
                         ctx.filter = 'none';
                         ctx.fillStyle = tokStyle.color || finalFillColor;
-                        ctx.fillText(char, dx, dy);
-                        // 填充层着重号
+                        // 使用四舍五入后的坐标
+                        ctx.fillText(char, rdx, rdy);
                         if (tokStyle.dot && dotX !== null && dotY !== null) {
                             ctx.beginPath();
-                            ctx.arc(dotX, dotY, currentFs * 0.1, 0, Math.PI * 2);
+                            ctx.arc(Math.round(dotX), Math.round(dotY), currentFs * 0.1, 0, Math.PI * 2);
                             ctx.fill();
                         }
                         ctx.restore();
@@ -3386,53 +3791,86 @@
                     // 必须和绘制逻辑、换行逻辑保持 100% 一致。
                     
                     // === 修复竖排块居中偏移：对齐测量逻辑 ===
+                    // === 修复竖排块居中偏移：对齐测量逻辑 ===
                     const lineMetrics = processedLines.map(tokens => {
                         let h = 0;
+                        let firstAlignDist = 0;
+                        let lastAlignDist = 0;
+                        let isFirstChar = true;
+
                         tokens.forEach(tok => {
-                            // 修改前：const fSize = baseFontSize * (tok.style.scale || 1.0);
                             const fSize = getFinalFSize(tok.style);
-                            // 临时设置字体以便测量
-                            ctx.font = `${tok.style.italic === true ? 'italic ' : ''}${tok.style.bold ? 'bold ' : effectiveWeight} ${fSize}px ${tok.style.font || effectiveFont.replace(/"/g, '')}`;
-                            
                             if (tok.isGroup || tok.style.tcy) {
-                                h += fSize + letterSpacingPx + (tok.style.kerning || 0) * fSize;
-                            } 
-                            else {
-                                for (const char of tok.text) {
+                                if (isFirstChar) isFirstChar = false;
+                                h += fSize + letterSpacingPx;
+                            } else {
+                                for (let charIdx = 0; charIdx < tok.text.length; charIdx++) {
+                                    const char = tok.text[charIdx];
                                     let charH;
+                                    const isSymmetric = CHARS_SYMMETRIC_HALF.includes(char);
+                                    const isPunct = CHARS_VERTICAL_COMPRESSION.includes(char);
+
+                                    if (isSymmetric || isPunct) charH = fSize * 0.5;
+                                    else if (ROTATED_LETTERS_NUMBERS.includes(char)) charH = ctx.measureText(char).width;
+                                    else charH = getCharVerticalHeight(char, fSize);
+
+                                    const alignDist = (fSize - charH) / 2;
                                     
-                                    // 【核心修复】：这里的逻辑必须与下面的绘制循环 100% 一致
-                                    // 1. 优先判断半高对称符号（括号类）
-                                    if (CHARS_SYMMETRIC_HALF.includes(char) || CHARS_VERTICAL_COMPRESSION.includes(char)) {
-                                        charH = fSize * 0.5;
-                                    } 
-                                    // 2. 旋转字符（英文、数字、动态中心符号）
-                                    else if (ROTATED_LETTERS_NUMBERS.includes(char) || /^[\x20-\x7E]$/.test(char)) {
-                                        charH = ctx.measureText(char).width;
-                                    } 
-                                    // 3. 普通汉字
-                                    else {
-                                        charH = getCharVerticalHeight(char, fSize);
-                                    }
+                                    // 记录首字符的向上偏移量
+                                    // if (isFirstChar) {
+                                    //     if (isSymmetric || isPunct || CHARS_OPENING.includes(char)) {
+                                    //         firstAlignDist = alignDist;
+                                    //     }
+                                    //    isFirstChar = false;
+                                    // }
+                                    
+                                    // 持续更新末字符的向下偏移量
+                                    lastAlignDist = 0;
+                                    // if (CHARS_CLOSING.includes(char)) {
+                                    //     lastAlignDist = alignDist;
+                                    // }
 
                                     h += charH + letterSpacingPx + (tok.style.kerning || 0) * fSize;
                                 }
                             }
                         });
-                        if (h > 0) h -= letterSpacingPx; // 去掉最后一个字符多算的间距
-                        return h;
+
+                        if (h > 0) h -= letterSpacingPx;
+
+                        return {
+                            theoreticalH: h,
+                            visualTop: -firstAlignDist,         // 墨迹相对于 currentY 的起始偏移
+                            visualBottom: h + lastAlignDist,    // 墨迹相对于 currentY 的终点位置
+                            visualFullH: h + firstAlignDist + lastAlignDist // 实际占用的总高度
+                        };
                     });
                                         
                     // ... (后面是 processedLines.forEach 绘制循环) ...
 
                     processedLines.forEach((tokens, i) => {
-                        const currentLineH = lineMetrics[i];
+                        const metrics = lineMetrics[i];
                         let currentY;
-                        if (effectiveAlign === 'column-center') currentY = localMinY + (boxHeight - currentLineH) / 2;
-                        else if (effectiveAlign === 'block-top') currentY = localMinY; 
-                        else if (effectiveAlign === 'block-bottom') currentY = localMaxY - currentLineH; 
-                        else currentY = localMinY + (boxHeight - Math.max(...lineMetrics)) / 2;
-                        // const x = (totalWidth / 2) - (i * colStep) - (colStep / 2);
+
+                        // 获取所有行中最宽（最长）的视觉高度，用于块居中
+                        const maxVisualH = Math.max(...lineMetrics.map(m => m.visualFullH));
+
+                        if (effectiveAlign === 'column-center') {
+                            // 单列居中：基于该列自身的视觉中心
+                            currentY = localMinY + (boxHeight - metrics.visualFullH) / 2 - metrics.visualTop;
+                        } else if (effectiveAlign === 'block-top') {
+                            // 块首对齐：确保视觉顶端贴合框顶
+                            currentY = localMinY - metrics.visualTop;
+                        } else if (effectiveAlign === 'block-bottom') {
+                            // 块尾对齐：确保视觉底端贴合框底
+                            currentY = localMaxY - metrics.visualBottom;
+                        } else {
+                            // 默认：block-center-top (整体块居中)
+                            // 计算整体块的起始偏移，并修正首字视觉偏置
+                            const blockStartOffset = (boxHeight - maxVisualH) / 2;
+                            currentY = localMinY + blockStartOffset - metrics.visualTop;
+                        }
+
+
                         // ✅ [新代码] 直接读取刚才算好的坐标
                         const x = linePositions[i];
 
@@ -3480,14 +3918,20 @@
                                 ctx.textAlign = 'left'; 
                                 ctx.textBaseline = 'middle';
 
-                                let currentXCursor = -(totalBlockWidth * groupScaleX) / 2;
+                                // 计算 currentXCursor 的初始值时也进行取整：
+                                // 修改前：
+                                // let currentXCursor = -(totalBlockWidth * groupScaleX) / 2;
+
+                                // 修改后：确保起始点也是整数像素坐标
+                                let currentXCursor = Math.round(-(totalBlockWidth * groupScaleX) / 2);
 
                                 tcyChars.forEach(m => {
                                     ctx.save();
                                     ctx.font = `${m.style.italic === true ? 'italic ' : ''}${m.style.bold ? 'bold ' : effectiveWeight} ${m.fSize}px ${m.style.font || effectiveFont.replace(/"/g, '')}`;
                                     
-                                    const drawX = x + currentXCursor + (m.lb * groupScaleX);
-                                    const drawY = charCenterY + (m.style.offY || 0);
+                                    // 【核心改动】：对 drawX 和 drawY 取整
+                                    const drawX = Math.round(x + currentXCursor + (m.lb * groupScaleX));
+                                    const drawY = Math.round(charCenterY + (m.style.offY || 0));
 
                                     ctx.translate(drawX + (m.style.offX || 0), drawY);
                                     ctx.scale(groupScaleX, 1.0); 
@@ -3522,7 +3966,12 @@
                                     }
 
                                     ctx.restore();
-                                    currentXCursor += (m.inkW + flexGap) * groupScaleX;
+                                    // --- 找到累加逻辑 ---
+                                    // 修改前：
+                                    // currentXCursor += (m.inkW + flexGap) * groupScaleX;
+
+                                    // 修改后：将每一枚字符占用的总宽度（墨迹+间距）进行取整
+                                    currentXCursor += Math.round((m.inkW + flexGap) * groupScaleX);
                                 });
 
                                 ctx.restore(); 
@@ -3653,7 +4102,8 @@
 
 
                                     ctx.save(); 
-                                    ctx.translate(x + (style.offX || 0), charCenterY + (style.offY || 0));
+                                    // 【核心改动】：对 translate 的坐标进行 Math.round()
+                                    ctx.translate(Math.round(x + (style.offX || 0)), Math.round(charCenterY + (style.offY || 0)));
                                     
                                     // --- B.旋转处理 & C.变形逻辑  (含修复) ---
                                     const isRotatedLetter = ROTATED_LETTERS_NUMBERS.includes(char);
@@ -3904,7 +4354,8 @@
                                         }
                                     }
                                     ctx.save();
-                                    ctx.translate(drawCenterX + (style.offX || 0), y + (style.offY || 0));
+                                    // 【核心改动】：对 translate 坐标取整
+                                    ctx.translate(Math.round(drawCenterX + (style.offX || 0)), Math.round(y + (style.offY || 0)));
                                     
                                     // 镜像处理逻辑
                                     if (style.mirror) {
@@ -4065,10 +4516,15 @@
                                     if (char === "〜") ctx.scale(-1, 1);
                                     // 重点：inkOffset 必须加在第二个参数 (渲染坐标的 Y)
                                     // 在旋转后的坐标系里，这才是视觉上的“左右水平移动”
-                                    ctx.strokeText(char, 0, inkOffset);
-                                    ctx.fillText(char, 0, inkOffset);
+                                    // 在 drawOriginal 约 3328 行附近
+                                    // 修改前：ctx.strokeText(char, 0, inkOffset);
+                                    // 修改后：强制水平偏移取整
+                                    const finalInkX = Math.round(inkOffset);
+                                    ctx.strokeText(char, 0, finalInkX);
+                                    ctx.fillText(char, 0, finalInkX);
                                 } else {
-                                    ctx.translate(inkOffset, charY);
+                                    // 确保 currentY 的累加步进是整数，或者在 translate 时取整
+ctx.translate(0, Math.round(charY));
                                     ctx.strokeText(char, 0, 0);
                                     ctx.fillText(char, 0, 0);
                                 }
@@ -4135,8 +4591,15 @@
 
         function resizeCanvas() {
             if(!currentImage) return;
-            mainCanvas.width = currentImage.width; 
-            mainCanvas.height = currentImage.height;
+            const w = currentImage.width;
+            const h = currentImage.height;
+
+            mainCanvas.width = w; 
+            mainCanvas.height = h;
+            
+            // 【核心修复】必须设置涂鸦画布的尺寸，否则无法绘图
+            paintCanvas.width = w;
+            paintCanvas.height = h;
             
             const container = document.getElementById('canvasContainer');
             const rect = container.getBoundingClientRect();
@@ -4159,6 +4622,10 @@
             viewState.y = (rect.height - currentImage.height * initScale) / 2;
             
             updateCanvasTransform();
+            // 新增：让 UI 画布覆盖整个容器窗口
+            
+            uiCanvas.width = container.clientWidth;
+            uiCanvas.height = container.clientHeight;
         }
         function exportImage() {
             if(!currentImage) return alert("无图片");
@@ -4199,12 +4666,12 @@
         
         // 建议放在 script 标签内 matchAndLoadFiles 函数附近
         document.getElementById('mtuProjectInput').addEventListener('change', async (e) => {
-            const allFiles = Array.from(e.target.files);
+        const allFiles = Array.from(e.target.files);
 
-            // --- 新增：抓取根文件夹名称 ---
-            if (allFiles.length > 0 && allFiles[0].webkitRelativePath) {
-                currentProjectName = allFiles[0].webkitRelativePath.split('/')[0];
-            }
+        if (allFiles.length > 0 && allFiles[0].webkitRelativePath) {
+            // 抓取选中的顶层文件夹名
+            currentProjectName = allFiles[0].webkitRelativePath.split('/')[0];
+        }
             
             // 1. 过滤原图：在根目录且是图片
             imageFiles = allFiles.filter(f => 
@@ -4263,11 +4730,10 @@
         
         // --- [修正] 适配 MTU 命名规范的匹配逻辑 ---
         // --- [优化] 批量匹配逻辑 ---
+        // --- [优化版] 批量匹配逻辑：支持无 JSON 原图加载 ---
         async function matchAndLoadFiles() {
-            if (!imageFiles || !jsonFiles) return;
+            if (!imageFiles) return; // 至少需要有图片
             
-            // --- 内部辅助函数：归一化处理 ---
-            // 例如把 "0329_left_inpainted.jpg" 和 "0329_left.jpg" 都变成 "0329_left"
             const getCleanKey = (name) => {
                 return name.toLowerCase()
                     .split('.')[0]
@@ -4278,90 +4744,80 @@
                     .trim();
             };
 
-            // 1. 扫描修复图和 JSON，建立快速索引字典
+            // 1. 扫描修复图和 JSON，建立快速索引
             const repairMap = new Map();
             if (repairFiles) {
-                repairFiles.forEach(f => {
-                    repairMap.set(getCleanKey(f.name), f);
-                });
+                repairFiles.forEach(f => repairMap.set(getCleanKey(f.name), f));
             }
 
             const jsonMap = new Map();
-            jsonFiles.forEach(f => {
-                jsonMap.set(getCleanKey(f.name), f);
-            });
+            if (jsonFiles) {
+                jsonFiles.forEach(f => jsonMap.set(getCleanKey(f.name), f));
+            }
 
             const tempMatches = [];
 
-            // 2. 以原图列表为基准进行“连连看”
+            // 2. 以原图列表为基准进行遍历
             for (const imgFile of imageFiles) {
                 const imgKey = getCleanKey(imgFile.name);
+                const jsonFile = jsonMap.get(imgKey);
                 
-                // 只要能找到对应的 JSON，就认为这一页有效
-                if (jsonMap.has(imgKey)) {
-                    const jsonFile = jsonMap.get(imgKey);
-                    // 在 matchAndLoadFiles 函数里的循环内修改
+                let fileRegions = [];
+                let maskRaw = null;
+                let targetJsonName = jsonFile ? jsonFile.name : (imgFile.name.split('.')[0] + ".json");
+
+                // 如果存在对应的 JSON，则解析它
+                if (jsonFile) {
                     try {
                         const jsonText = await jsonFile.text();
                         const raw = JSON.parse(jsonText);
                         const data = raw.regions ? raw : raw[Object.keys(raw)[0]];
-                        let fileRegions = data.regions || []; // 临时容器，确保数据稳健
+                        fileRegions = data.regions || [];
+                        maskRaw = data.mask_raw || null;
 
-                        // 在循环处理 regions 的地方
-                        // 在 matchAndLoadFiles 函数的循环内部修改：
                         fileRegions.forEach(r => {
-                            // 1. 基础属性初始化 (颜色、间距等)
-                            // 1. 方向转换
                             if (r.direction === 'vertical') r.direction = 'v';
                             if (r.direction === 'horizontal') r.direction = 'h';
-
-                            // 2. 【核心修改】强制覆盖间距，无视 JSON 原始数据
+                            r.font_size = Math.round(r.font_size || 20);
                             r.line_spacing = 1.2; 
                             r.letter_spacing = 0; 
 
-                            // 3. 颜色与描边兼容处理
                             const finalFg = r.fg_colors || r.font_color;
                             if (finalFg) r.parsedColor = parseColor(finalFg);
 
-                            // 4. 颜色检测 (如接近白色自动加黑边)
-                            if (r.parsedColor) {
-                                const hex = colorToHex(r.parsedColor);
-                                if (isNearWhite(hex)) {
-                                    if (!r.strokeColor || r.strokeColor === 'none') {
-                                        r.strokeColor = "#000000"; 
-                                        if (r.strokeWidthRatio === undefined || r.strokeWidthRatio === 0) {
-                                            r.strokeWidthRatio = 0.2;
-                                        }
-                                    }
+                            if (r.parsedColor && isNearWhite(colorToHex(r.parsedColor))) {
+                                if (!r.strokeColor || r.strokeColor === 'none') {
+                                    r.strokeColor = "#000000"; 
+                                    if (r.strokeWidthRatio === undefined || r.strokeWidthRatio === 0) r.strokeWidthRatio = 0.2;
                                 }
                             }
 
-                            // --- [核心改动：大框数据优先判定] ---
-                            // 判断 JSON 中是否已经存在保存好的大框坐标 (box) 和 角度 (angle)
                             if (r.box && Array.isArray(r.box) && r.angle !== undefined) {
-                                console.log("检测到精修坐标，直接载入，不重置大框。");
-                                // 这里什么都不做，直接使用 JSON 里的 box 和 angle
+                                // 保持精修坐标
                             } else {
-                                // 只有在没有大框数据时（如首次导入原始 OCR 结果），才执行初始化计算
                                 restoreLinesFromCenter(r); 
                                 initRegionBox(r); 
                             }
                         });
-
-                        tempMatches.push({ 
-                            image: imgFile, 
-                            repairImage: repairMap.get(imgKey) || null, 
-                            jsonName: jsonFile.name, 
-                            regions: fileRegions,
-                            mask_raw: data.mask_raw // [新增] 保存蒙版数据
-                        });
                     } catch (err) {
-                        console.error("加载文件时发生错误:", err);
+                        console.error(`解析 JSON 失败 (${jsonFile.name}):`, err);
                     }
+                } else {
+                    // 如果没有 JSON，控制台记录一下，方便调试
+                    console.log(`未发现 JSON，已为 ${imgFile.name} 创建空白编辑页`);
                 }
+
+                tempMatches.push({ 
+                    image: imgFile, 
+                    repairImage: repairMap.get(imgKey) || null, 
+                    jsonName: targetJsonName, 
+                    regions: fileRegions,
+                    mask_raw: maskRaw,
+                    paint_raw: null // 新页面涂鸦初始为空
+                });
             }
 
-            // 3. 【核心保证】执行自然数排序，防止 10.jpg 排在 2.jpg 前面
+            // 3. 自然数排序
             matchedFiles = tempMatches.sort((a, b) => 
                 a.image.name.localeCompare(b.image.name, undefined, { numeric: true, sensitivity: 'base' })
             );
@@ -4371,9 +4827,7 @@
                 currentFileIndex = 0;
                 batchNav.classList.replace('hidden', 'flex');
                 loadFile(0);
-                console.log(`成功匹配 ${matchedFiles.length} 组文件，修复图匹配成功率已提升。`);
-            } else {
-                alert("未发现匹配的 JSON 文件！请检查原图和 JSON 是否在前缀上保持一致。");
+                console.log(`成功加载 ${matchedFiles.length} 页（其中包含 ${matchedFiles.length - (jsonFiles ? jsonFiles.length : 0)} 个新页面）`);
             }
         }
 
@@ -4420,24 +4874,30 @@
         async function loadFile(index) {
             if (index < 0 || index >= matchedFiles.length) return;
             const item = matchedFiles[index];
-            // --- [插入开始] ---
-            if (item.mask_raw) {
-                currentMaskImage = await loadMaskFromBase64(item.mask_raw);
-            } else {
-                currentMaskImage = null;
-            }
-            // --- [插入结束] ---
-            
-            // 1. 同步 UI 页码显示
+
+            // 1. 同步 UI 页码
             pageInput.value = index + 1;
             fileCounterTotal.textContent = `/ ${matchedFiles.length}`;
 
             const img = new Image();
-            img.onload = () => {
+            img.onload = async () => {
                 currentImage = img;
                 currentFileName = item.image.name.split('.')[0];
 
-                // 加载修复图逻辑
+                // 【关键修复 1】先执行重置，这会清空所有画布
+                resizeCanvas();
+
+                // 【关键修复 2】在重置之后再还原涂鸦，这样涂鸦才不会被洗掉
+                if (item.paint_raw) {
+                    const pImg = new Image();
+                    pImg.onload = () => {
+                        paintCtx.drawImage(pImg, 0, 0);
+                        draw(); // 还原后重绘一次
+                    };
+                    pImg.src = item.paint_raw;
+                }
+
+                // 加载修复图
                 if (item.repairImage) {
                     const rImg = new Image();
                     rImg.onload = () => {
@@ -4448,14 +4908,21 @@
                 } else {
                     currentRepairImage = null;
                 }
-                
 
-                // 直接读取内存中的数据，不要在 loadFile 里面写 regions.forEach(...) 去重新 init
                 regions = JSON.parse(JSON.stringify(item.regions)); 
-                
-                resizeCanvas();
                 resetSidebar(); 
                 updateBatchNavUI();
+                
+                // 加载蒙版
+                if (item.mask_raw) {
+                    await loadMaskToCanvas(item.mask_raw);
+                    currentMaskImage = await loadMaskFromBase64(item.mask_raw);
+                } else {
+                    currentMaskImage = null;
+                    maskCanvas.width = 0; 
+                    maskCanvas.height = 0;
+                }
+                
                 draw();
             };
             img.src = URL.createObjectURL(item.image);
@@ -4473,6 +4940,8 @@
             if (matchedFiles[currentFileIndex]) {
                 // 使用深拷贝存入内存，保证数据独立
                 matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
+                // 【新增】翻页时记录涂鸦
+                matchedFiles[currentFileIndex].paint_raw = paintCanvas.toDataURL();
             }
 
             // --- [保留功能：计算新索引并检查上下限] ---
@@ -4587,25 +5056,45 @@
                             t.src = URL.createObjectURL(item.repairImage);
                         });
 
-                        // 处理该页的蒙版
-                        const pageMask = await loadMaskFromBase64(item.mask_raw);
-                        
-                        if (pageMask) {
-                            const mCanvas = document.createElement('canvas');
-                            mCanvas.width = offCanvas.width;
-                            mCanvas.height = offCanvas.height;
-                            const mCtx = mCanvas.getContext('2d');
-                            mCtx.drawImage(pageMask, 0, 0);
-                            mCtx.globalCompositeOperation = 'source-atop';
-                            mCtx.drawImage(repairImg, 0, 0);
-                            offCtx.drawImage(mCanvas, 0, 0);
+                        // --- 核心判断开始 ---
+                        if (ignoreMaskForRepair) {
+                            // 【全图模式】直接把修复图画在底层原图上
+                            offCtx.drawImage(repairImg, 0, 0, offCanvas.width, offCanvas.height);
                         } else {
-                            offCtx.drawImage(repairImg, 0, 0);
+                            // 【蒙版模式】只有没开启全图修复时，才执行复杂的蒙版合成
+                            const pageMask = await loadMaskFromBase64(item.mask_raw);
+                            if (pageMask) {
+                                const mCanvas = document.createElement('canvas');
+                                mCanvas.width = offCanvas.width;
+                                mCanvas.height = offCanvas.height;
+                                const mCtx = mCanvas.getContext('2d');
+                                mCtx.drawImage(pageMask, 0, 0);
+                                mCtx.globalCompositeOperation = 'source-atop';
+                                mCtx.drawImage(repairImg, 0, 0);
+                                offCtx.drawImage(mCanvas, 0, 0);
+                            } else {
+                                // 如果连蒙版都没有，就默认全图修复（保底逻辑）
+                                offCtx.drawImage(repairImg, 0, 0, offCanvas.width, offCanvas.height);
+                            }
                         }
+                        // --- 核心判断结束 ---
+
                         URL.revokeObjectURL(repairImg.src);
                     }
-
-                    // 3. 绘制文字层
+                    // 3. 在 for 循环内部，渲染文字之前加入：
+                    // 【核心修复点】：处理每一页特有的涂鸦
+                    if (item.paint_raw) {
+                        const pImg = await new Promise((resolve) => {
+                            const t = new Image();
+                            t.onload = () => resolve(t);
+                            t.onerror = () => resolve(null); // 加载失败也继续，防止卡死
+                            t.src = item.paint_raw;
+                        });
+                        if (pImg) {
+                            offCtx.drawImage(pImg, 0, 0);
+                        }
+                    }
+                    // 4. 绘制文字层
                     ctx = offCtx; 
                     item.regions.forEach(r => drawSmartTranslation(r));
 
@@ -4641,6 +5130,108 @@
         // 绑定到按钮
         btnExport.onclick = handleExport;
 
+        async function handleExportToDirectory() {
+            if (matchedFiles.length === 0) return alert("请先批量导入项目文件夹！");
+            
+            try {
+                // 1. 弹出文件夹选择器
+                const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+                
+                const btn = document.getElementById('btnExportDir');
+                const originalText = btn.innerText;
+                btn.disabled = true;
+
+                // 离屏画布，用于后台静默渲染
+                const offCanvas = document.createElement('canvas');
+                const offCtx = offCanvas.getContext('2d');
+
+                for (let i = 0; i < matchedFiles.length; i++) {
+                    const item = matchedFiles[i];
+                    btn.innerText = `写入中 ${i + 1}/${matchedFiles.length}...`;
+
+                    // A. 加载并渲染原图
+                    const img = await new Promise((res) => {
+                        const t = new Image();
+                        t.onload = () => res(t);
+                        t.src = URL.createObjectURL(item.image);
+                    });
+                    offCanvas.width = img.width;
+                    offCanvas.height = img.height;
+                    offCtx.drawImage(img, 0, 0);
+
+                    // B. 处理修复图和蒙版
+                    // --- 修改后的 handleExportToDirectory 修复层逻辑 ---
+                    if (item.repairImage) {
+                        const rImg = await new Promise(res => {
+                            const t = new Image();
+                            t.onload = () => res(t);
+                            t.src = URL.createObjectURL(item.repairImage);
+                        });
+
+                        if (ignoreMaskForRepair) {
+                            // 【全图模式】直接输出整张修复图
+                            offCtx.drawImage(rImg, 0, 0, offCanvas.width, offCanvas.height);
+                        } else {
+                            // 【蒙版模式】
+                            const pageMask = await loadMaskFromBase64(item.mask_raw);
+                            if (pageMask) {
+                                const mCanvas = document.createElement('canvas');
+                                mCanvas.width = offCanvas.width; 
+                                mCanvas.height = offCanvas.height;
+                                const mCtx = mCanvas.getContext('2d');
+                                mCtx.drawImage(pageMask, 0, 0);
+                                mCtx.globalCompositeOperation = 'source-atop';
+                                mCtx.drawImage(rImg, 0, 0);
+                                offCtx.drawImage(mCanvas, 0, 0);
+                            } else {
+                                offCtx.drawImage(rImg, 0, 0, offCanvas.width, offCanvas.height);
+                            }
+                        }
+                        URL.revokeObjectURL(rImg.src);
+                    }
+                    // C. 处理涂鸦层
+                    if (item.paint_raw) {
+                        const pImg = await new Promise(res => {
+                            const t = new Image();
+                            t.onload = () => res(t);
+                            t.src = item.paint_raw;
+                        });
+                        offCtx.drawImage(pImg, 0, 0);
+                    }
+
+                    // D. 渲染文字层 (劫持全局 ctx)
+                    const oldCtx = ctx;
+                    ctx = offCtx;
+                    item.regions.forEach(r => drawSmartTranslation(r));
+                    ctx = oldCtx;
+
+                    // E. 写入文件到指定目录
+                    const fileName = `${item.image.name.split('.')[0]}_translated.png`;
+                    const blob = await new Promise(r => offCanvas.toBlob(r, 'image/png'));
+                    const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+                    const writable = await fileHandle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+
+                    // 释放内存
+                    URL.revokeObjectURL(img.src);
+                }
+
+                alert(`🎉 导出完成！${matchedFiles.length} 张图片已存入目标文件夹。`);
+                btn.innerText = originalText;
+                btn.disabled = false;
+
+            } catch (err) {
+                console.error(err);
+                if (err.name !== 'AbortError') alert("导出中断：" + err.message);
+                document.getElementById('btnExportDir').disabled = false;
+                document.getElementById('btnExportDir').innerText = "直接输出目录(新)";
+            }
+        }
+
+        // 绑定按钮事件
+        document.getElementById('btnExportDir').onclick = handleExportToDirectory;
+
         // 后台重建版单图导出（不依赖主画布状态，天生干净）
         // 后台重建版单图导出（修复蒙版叠加逻辑）
         async function exportCurrentSingleImage() {
@@ -4660,27 +5251,32 @@
                 offCtx.drawImage(currentImage, 0, 0);
 
                 // --- 第二层：蒙版局部修复 (同步预览逻辑) ---
+                // --- 修改后的 exportCurrentSingleImage 修复层逻辑 ---
                 if (currentRepairImage) {
-                    if (currentMaskImage) {
-                        const maskCanvas = document.createElement('canvas');
-                        maskCanvas.width = offCanvas.width;
-                        maskCanvas.height = offCanvas.height;
-                        const mCtx = maskCanvas.getContext('2d');
+                    if (ignoreMaskForRepair) {
+                        // 【全图模式】
+                        offCtx.drawImage(currentRepairImage, 0, 0, offCanvas.width, offCanvas.height);
+                    } else if (currentMaskImage) {
+                        // 【蒙版模式】
+                        const mCanvas = document.createElement('canvas');
+                        mCanvas.width = offCanvas.width;
+                        mCanvas.height = offCanvas.height;
+                        const mCtx = mCanvas.getContext('2d');
 
-                        // A. 画透明蒙版
                         mCtx.drawImage(currentMaskImage, 0, 0);
-                        // B. 混合模式裁切
                         mCtx.globalCompositeOperation = 'source-atop';
                         mCtx.drawImage(currentRepairImage, 0, 0);
                         
-                        // 盖回主导出层
-                        offCtx.drawImage(maskCanvas, 0, 0);
+                        offCtx.drawImage(mCanvas, 0, 0);
                     } else {
-                        // 如果没蒙版，则全图覆盖（这是旧逻辑的兜底）
-                        offCtx.drawImage(currentRepairImage, 0, 0);
+                        // 兜底：没有蒙版数据时直接画修复图
+                        offCtx.drawImage(currentRepairImage, 0, 0, offCanvas.width, offCanvas.height);
                     }
                 }
-
+                // --- 【新增】在文字层之前绘制涂鸦内容 ---
+                if (paintCanvas.width > 0) {
+                    offCtx.drawImage(paintCanvas, 0, 0);
+                }
                 // --- 第三层：画文字 ---
                 ctx = offCtx; // 劫持全局 ctx 变量指向离屏画布
                 regions.forEach(r => drawSmartTranslation(r));
@@ -4928,8 +5524,10 @@
             });
 
             // 限制字号范围，防止出现极端数值
+            // 修改后的逻辑：中间保持精度，最后一步变整数
             const result = minFontSize === Infinity ? 20 : minFontSize;
-            return parseFloat(Math.max(5, Math.min(result, 200)).toFixed(2));
+            // 限制在 5px 到 200px 之间，并进行四舍五入取整
+            return Math.round(Math.max(5, Math.min(result, 200)));
         }
 
         // 计算单行文字的建议字号（复刻自 Angle 逻辑）
@@ -5137,6 +5735,25 @@
         // --- [修正版] 全局快捷键：对齐日漫逻辑 ---
         // --- 全局快捷键：日漫模式翻页与字号调节 ---
         window.addEventListener('keydown', (e) => {
+        // --- 核心修复：把蒙版缩放逻辑提到 isEditing 判断之前 ---
+            if (maskEditMode !== 'none' || paintMode !== 'none') {
+                if (e.key === '<' || e.key === ',') { 
+                    maskBrushSize = Math.max(1, maskBrushSize - 2);
+                    // 如果你有笔触大小的显示框，同步更新它
+                    const sizeInput = document.getElementById('brushSizeInput');
+                    if(sizeInput) sizeInput.value = maskBrushSize;
+                    renderUI(); // 新增
+                    return; // 处理完就返回，避免干扰其他逻辑
+                }
+                if (e.key === '>' || e.key === '.') {
+                    maskBrushSize = Math.min(200, maskBrushSize + 2);
+                    const sizeInput = document.getElementById('brushSizeInput');
+                    if(sizeInput) sizeInput.value = maskBrushSize;
+                    renderUI(); // 新增
+                    return;
+                }
+            }
+
             // 保护逻辑：如果正在打字，不触发翻页
             const isEditing = document.activeElement === transEditArea || 
                             document.activeElement === origEditArea ||
@@ -5147,17 +5764,20 @@
             if (e.key === 'ArrowLeft') { e.preventDefault(); navigateFiles(1); }
             if (e.key === 'ArrowRight') { e.preventDefault(); navigateFiles(-1); }
 
-            // 字号调节 (步进 0.5)
+            // 字号调节 (步进 1)
+            // 找到修改为：
             if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
                 const r = regions[activeRegionIndex];
                 if (e.key === '[') {
-                    r.font_size = Math.max(1, (parseFloat(r.font_size) || 20) - 0.5);
-                    fontSizeInput.value = r.font_size.toFixed(1);
+                    // 步进改为 1，并强制取整
+                    r.font_size = Math.max(1, Math.round(parseFloat(r.font_size) || 20) - 1);
+                    fontSizeInput.value = r.font_size; // 整数无需 toFixed
                     draw();
                 }
                 if (e.key === ']') {
-                    r.font_size = (parseFloat(r.font_size) || 20) + 0.5;
-                    fontSizeInput.value = r.font_size.toFixed(1);
+                    // 步进改为 1，并强制取整
+                    r.font_size = Math.round(parseFloat(r.font_size) || 20) + 1;
+                    fontSizeInput.value = r.font_size;
                     draw();
                 }
             }
@@ -5324,7 +5944,7 @@
 
             // --- D. 同步其他属性 (字号、字体等) ---
             fontSizeInput.disabled = false;
-            fontSizeInput.value = (r.font_size || 20).toFixed(1);
+            fontSizeInput.value = Math.round(r.font_size || 20);
             lineSpacingInput.disabled = false;
             lineSpacingInput.value = (r.line_spacing || 1.2).toFixed(2);
             letterSpacingInput.disabled = false;
@@ -5386,6 +6006,100 @@
             updateColorSwatches();
         }
 
+        // 绑定画笔按钮
+        // 找到 maskBrushBtn.onclick
+        // 1. 蒙版画笔
+        document.getElementById('maskBrushBtn').onclick = function() {
+            const isActive = (maskEditMode === 'brush'); // 记录点击前的状态
+            clearAllTools(); // 先清空
+            if (!isActive) {
+                maskEditMode = 'brush';
+                showMask = true; // 自动开启显蒙
+                document.getElementById('showMaskCb').checked = true;
+                this.classList.add('mask-active');
+            }
+            updateMaskToolUI();
+        };
+
+        // 2. 蒙版橡皮
+        document.getElementById('maskEraserBtn').onclick = function() {
+            const isActive = (maskEditMode === 'eraser');
+            clearAllTools();
+            if (!isActive) {
+                maskEditMode = 'eraser';
+                showMask = true; 
+                document.getElementById('showMaskCb').checked = true;
+                this.classList.add('mask-active');
+            }
+            updateMaskToolUI();
+        };
+
+        // 3. 涂鸦画笔
+        document.getElementById('paintBrushBtn').onclick = function() {
+            const isActive = (paintMode === 'brush');
+            clearAllTools();
+            if (!isActive) {
+                paintMode = 'brush';
+                this.classList.add('mask-active');
+            }
+            updateToolStatus();
+        };
+
+        // 4. 涂鸦橡皮
+        document.getElementById('paintEraserBtn').onclick = function() {
+            const isActive = (paintMode === 'eraser');
+            clearAllTools();
+            if (!isActive) {
+                paintMode = 'eraser';
+                this.classList.add('mask-active');
+            }
+            updateToolStatus();
+        };
+
+        // 5. 混合模式 (混)
+        document.getElementById('comboModeBtn').onclick = function() {
+            const isActive = comboMode;
+            clearAllTools();
+            if (!isActive) {
+                comboMode = true;
+                showMask = true; // 混合模式通常涉及蒙版，建议自动显蒙
+                document.getElementById('showMaskCb').checked = true;
+                this.classList.add('mask-active');
+            }
+            draw(); // 混合模式没有专门的 UI update 函数，直接重绘
+        };
+
+        // 更新工具栏样式的辅助函数
+        // 修改 updateMaskToolUI (约 3880 行附近)
+        function updateMaskToolUI() {
+            // 逻辑：如果是蒙版模式或混合模式，光标变十字
+            const container = document.getElementById('canvasContainer');
+            if (maskEditMode !== 'none' || comboMode) {
+                container.style.cursor = 'crosshair';
+            }
+            draw();
+        }
+        
+        function clearAllTools() {
+            // 1. 重置所有内部逻辑状态
+            maskEditMode = 'none';
+            paintMode = 'none';
+            comboMode = false;
+            
+            // 2. 移除所有 5 个按钮的高亮样式 (mask-active)
+            const toolBtns = [
+                'maskBrushBtn', 'maskEraserBtn', 
+                'paintBrushBtn', 'paintEraserBtn', 
+                'comboModeBtn'
+            ];
+            toolBtns.forEach(id => {
+                const btn = document.getElementById(id);
+                if (btn) btn.classList.remove('mask-active');
+            });
+
+            // 3. 恢复默认光标
+            document.getElementById('canvasContainer').style.cursor = 'grab';
+        }
         // 修改 onMouseDown 的这部分逻辑
         /* 在原 onMouseDown 函数中：
            if (idx !== -1) setActiveRegion(idx);
@@ -5412,6 +6126,15 @@
             });
             region.lines = newLines;
         }
+        // 切换涂鸦工具的 UI 激活状态
+        // 修改 updateToolStatus
+        function updateToolStatus() {
+            const container = document.getElementById('canvasContainer');
+            if (paintMode !== 'none' || comboMode) {
+                container.style.cursor = 'crosshair';
+            }
+            draw();
+        }
 
         /**
          * 导出当前页面的 JSON 数据
@@ -5421,16 +6144,18 @@
             if (!regions || regions.length === 0) return alert("当前没有可导出的数据");
 
             // 1. 导出前，先同步一下当前页面的最新状态到内存 (防止最后一次挪动没存上)
-            if (matchedFiles[currentFileIndex]) {
-                matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
-            }
+            // if (matchedFiles[currentFileIndex]) {
+            //     matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
+            // }
 
             // 2. 构建导出结构
             // 这里导出的 regions 数组会包含你在编辑器里改过的每一个属性 (angle, box, blur, stroke 等)
             const exportData = {
-                regions: JSON.parse(JSON.stringify(regions)) 
-            };
-
+                    regions: JSON.parse(JSON.stringify(regions)),
+                    // 【新增】保存当前页的蒙版和涂鸦
+                    mask_raw: matchedFiles[currentFileIndex]?.mask_raw || null,
+                    paint_raw: paintCanvas.toDataURL() 
+                };
             // 3. 转换为 JSON 字符串并触发下载
             const jsonStr = JSON.stringify(exportData, null, 2);
             const blob = new Blob([jsonStr], { type: "application/json" });
@@ -5461,7 +6186,10 @@
             // 遍历内存中的所有文件数据
             matchedFiles.forEach(item => {
                 const fileContent = {
-                    regions: item.regions
+                    regions: item.regions,
+                    // 【核心修复】从内存中提取每一页存好的蒙版和涂鸦
+                    mask_raw: item.mask_raw || null,
+                    paint_raw: item.paint_raw || null               
                 };
                 const fileName = item.jsonName || (item.image.name.split('.')[0] + ".json");
                 zip.file(fileName, JSON.stringify(fileContent, null, 2));
@@ -5472,7 +6200,8 @@
                 const url = URL.createObjectURL(content);
                 const link = document.createElement("a");
                 link.href = url;
-                link.download = `MTU_JSON_Project_${Date.now()}.zip`;
+                // 使用抓取的项目名
+                link.download = `${currentProjectName}_JSON_${Date.now()}.zip`;
                 link.click();
                 URL.revokeObjectURL(url);
             } catch (err) {
@@ -5481,6 +6210,13 @@
             }
         }
 
+        // 取色器联动
+        document.getElementById('paintColorPicker').oninput = (e) => {
+            activePaintColor = e.target.value;
+            document.getElementById('paintColorBtn').style.backgroundColor = activePaintColor;
+            // 自动变色文字以防白色背景看不见字
+            document.getElementById('paintColorBtn').style.color = isNearWhite(activePaintColor) ? '#000' : '#fff';
+        };
 
         // --- 绑定事件 (在底部 JS 区域) ---
         btnResetSidebar.addEventListener('click', resetTextareaContent);
@@ -5554,7 +6290,11 @@
             nativeBlurPicker.value = colorToHex(currentColor);
             nativeBlurPicker.click();
         });
-
+        // mask
+        document.getElementById('showMaskCb').addEventListener('change', (e) => { 
+            showMask = e.target.checked; 
+            draw(); 
+        });
 
         // 补充：发光开关和大小的即时监听
         // --- 修改后的发光控制监听 ---
