@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v18.0.6)</title>
+    <title>MTU 嵌字编辑器 (v18.2.8)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
@@ -289,6 +289,21 @@
                     </button>
                 </div>
             </div>
+            <div class="flex flex-col">
+                <span class="text-[9px] text-gray-400 uppercase tracking-wider" title="标点排版模式">标点模式</span>
+                <div class="flex gap-1">
+                    <select id="punctAlignSelect" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 outline-none focus:border-blue-500 h-6 w-24">
+                        <option value="half">紧凑半格 (中日)</option>
+                        <option value="full">疏朗全格 (中日)</option>
+                        <option value="center">几何居中 (港台)</option>
+                    </select>
+                    <button id="btnForcePunctAlign" class="bg-gray-700 hover:bg-indigo-600 text-white rounded px-1 flex items-center justify-center border border-gray-600 transition-colors w-6 h-6" title="强制应用当前标点模式到全书">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
             <div id="alignScopeDialog" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
                 <div class="bg-gray-800 border border-gray-700 p-6 rounded-xl shadow-2xl w-96">
                     <h3 class="text-white font-bold text-lg mb-2">应用排版样式</h3>
@@ -465,6 +480,7 @@
                     <button class="rt-btn text-gray-400" onclick="insertText('♪')" title="八分音符">♪</button>
                     <button class="rt-btn text-gray-400" onclick="insertText('♫')" title="连杠八分音符">♫</button>
                     <button class="rt-btn text-gray-400" onclick="insertText('♬')" title="连杠十六分音符">♬</button>
+                    <button class="rt-btn text-gray-400" onclick="insertText('█')" title="实心方形">█</button>
                 </div>
 
                 <div class="flex flex-col flex-1 min-h-0 mb-2">
@@ -713,7 +729,10 @@
   
         let comboMode = false;      // [新增] 混合模式状态
         let comboActiveTool = 'none'; // [新增] 记录当前使用的是涂鸦还是蒙版
-
+        let activePunctAlign = 'half'; // 全局默认标点模式
+        let isPageLoading = false; // 记录是否正在转场中
+        let currentLoadingId = 0; // 全局加载计数器，用于解决文字滞后
+        let isCanvasDirty = false; // [新增] 标记当前页面的画布是否被动过
 
         const uiCanvas = document.getElementById('uiCanvas');
         const uiCtx = uiCanvas.getContext('2d');
@@ -811,7 +830,8 @@
         const CHARS_PUNCT   = "，。、！？：；";           // 基础标点：墨迹在右上（竖排）/在左下（横排）
         // 不参与水平强制居中的符号
         const CHARS_NO_CENTER_H = "〝〟『』「」";
-
+        // 专门针对你要求的三个目标标点
+        const TARGET_PUNCTS = "。，、";
         const CHARS_SYMMETRIC_HALF = "〈〉（）【】《》『』「」｛｝〝〟";
         const ROTATED_LETTERS_NUMBERS = "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM0123456789!?:;" + CHARS_DYNAMIC_CENTER;
         const CHARS_UPRIGHT_CENTER = "！？：；.";
@@ -843,7 +863,9 @@
         const repairOpacityRange = document.getElementById('repairOpacityRange');
         const repairOpacityValue = document.getElementById('repairOpacityValue');
 
-
+        // [新增] 专门用于修复图合成的离屏画布，避免在 draw() 中反复创建
+        const compCanvas = document.createElement('canvas');
+        const compCtx = compCanvas.getContext('2d');
 
         if (repairOpacityRange) {
             repairOpacityRange.addEventListener('input', (e) => {
@@ -877,9 +899,14 @@
 
         // 同步当前编辑的蒙版到内存数据中
         function syncMaskData() {
-            // 将离屏画布转为 Base64（不带 DataURL 头，仅内容）
+            // 检查画布是否有内容
+            if (maskCanvas.width === 0 || maskCanvas.height === 0) return;
+            
+            // 将最新的 Canvas 内容转为 Base64 字符串
             const base64 = maskCanvas.toDataURL('image/png').split(',')[1];
+            
             if (matchedFiles[currentFileIndex]) {
+                // 更新内存中的蒙版数据
                 matchedFiles[currentFileIndex].mask_raw = base64;
             }
         }
@@ -930,6 +957,7 @@
 
         function handlePaint(pos, op) {
             if (op === 'none' || paintCanvas.width === 0) return;
+            isCanvasDirty = true; // [核心新增]
             
             paintCtx.save();
             // 根据操作切换：brush 用颜色，eraser 用透明模式
@@ -2662,6 +2690,7 @@
         // 修改 handleMaskPaint 和 handlePaint 内部
         function handleMaskPaint(pos, op) {
             if (op === 'none') return;
+            isCanvasDirty = true; // [核心新增]
             
             maskCtx.save();
             maskCtx.globalCompositeOperation = (op === 'brush') ? 'source-over' : 'destination-out';
@@ -2883,6 +2912,12 @@
         }
 
         function draw() {
+            if (isPageLoading) {
+                ctx.fillStyle = "#111827"; // 背景色
+                ctx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+                // 可以在屏幕中心画个转圈或者提示文字
+                return; 
+            }
             if (ctx !== mainCanvasCtx && !isExporting_logic_running) { 
                 ctx = mainCanvasCtx; 
             }
@@ -2902,23 +2937,39 @@
             // 2. 中层：渲染修复图 (被蒙版裁剪后的部分)
             // 2. 中层：渲染修复图 (被蒙版裁剪后的部分)
             // 2. 中层：渲染修复图
+            // --- 修改后的 draw() 函数内部关于修复图的部分 ---
+
             if (displayMode === 'translation' && currentRepairImage) {
                 ctx.save();
                 ctx.globalAlpha = repairOpacity; 
 
                 if (ignoreMaskForRepair) {
-                    // --- 【新增】全图模式：直接绘制完整修复图，不进行蒙版裁剪 ---
+                    // 全图修复模式：直接绘制
                     ctx.drawImage(currentRepairImage, 0, 0, mainCanvas.width, mainCanvas.height);
                 } else if (maskCanvas.width > 0) {
-                    // 原有的蒙版裁剪模式
-                    const off = document.createElement('canvas');
-                    off.width = mainCanvas.width; 
-                    off.height = mainCanvas.height;
-                    const oCtx = off.getContext('2d');
-                    oCtx.drawImage(maskCanvas, 0, 0, off.width, off.height); 
-                    oCtx.globalCompositeOperation = 'source-atop';
-                    oCtx.drawImage(currentRepairImage, 0, 0, off.width, off.height);
-                    ctx.drawImage(off, 0, 0);
+                    // --- 优化后的透明合成逻辑 ---
+                    
+                    // 1. 确保离屏画布尺寸与主画布一致
+                    if (compCanvas.width !== mainCanvas.width || compCanvas.height !== mainCanvas.height) {
+                        compCanvas.width = mainCanvas.width;
+                        compCanvas.height = mainCanvas.height;
+                    }
+
+                    // 2. 在离屏画布上进行合成
+                    compCtx.clearRect(0, 0, compCanvas.width, compCanvas.height);
+                    
+                    // 先画修复图
+                    compCtx.drawImage(currentRepairImage, 0, 0, compCanvas.width, compCanvas.height);
+                    
+                    // 使用 destination-in 模式：只保留与蒙版重合的部分，其余变透明
+                    compCtx.globalCompositeOperation = 'destination-in';
+                    compCtx.drawImage(maskCanvas, 0, 0, compCanvas.width, compCanvas.height);
+                    
+                    // 切回默认模式，防止影响下一次绘图
+                    compCtx.globalCompositeOperation = 'source-over';
+
+                    // 3. 将合成好的“透明修复碎片”画到主画布上
+                    ctx.drawImage(compCanvas, 0, 0);
                 }
                 
                 ctx.restore();
@@ -3989,19 +4040,20 @@
 
                                 // === 1. 预计算竖排高度 (Pre-calc Heights) ===
                                 const charHeights = [];
+                                // --- 修改后的竖排步进逻辑 ---
                                 for (const char of tok.text) {
                                     let h;
-                                    let isSymmetric = false; // 标记是否为"旋转且对称"的符号(如括号)
+                                    let isSymmetric = false; // 标记是否为"旋转且对称"的符号(如括号)                                    
+                                    
+                                    // 在竖排预处理循环内
+                                    const mode = region.punctAlign || 'half'; // 默认半格
 
-                                    if (CHARS_SYMMETRIC_HALF.includes(char)) {
-                                        // 1. 括号类：既要半高，又要旋转/居中
-                                        isSymmetric = true;
-                                        h = fSize * 0.5;
-                                    } 
-                                    else if (CHARS_VERTICAL_COMPRESSION.includes(char)) {
-                                        // 2. 句读点(，。、)：只要半高，但【不要】旋转 (isSymmetric = false)
-                                        // 这样它们就会进入 !needsRotation 分支，去执行右上角偏移逻辑
-                                        isSymmetric = false; 
+                                    if (TARGET_PUNCTS.includes(char)) {
+                                        // 只有 half 模式占 0.5，其余（full, center）均占 1.0
+                                        h = (mode === 'half') ? fSize * 0.5 : fSize * 1.0;
+                                    }
+                                    else if (CHARS_SYMMETRIC_HALF.includes(char) || isHalfWidth(char)) {
+                                        // 括号和其他压缩字符维持原有的半格逻辑
                                         h = fSize * 0.5;
                                     }
                                     else {
@@ -4182,11 +4234,29 @@
                                             drawX = (metrics.actualBoundingBoxLeft - metrics.actualBoundingBoxRight) / 2;
                                             drawY = (metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2;
                                         }
-                                        else if (CHARS_PUNCTUATION_TOP_RIGHT.includes(char)) { 
-                                            // 句读点已被贴边逻辑接管 Y 轴，这里只需处理 X 轴偏移
-                                            drawX = fSize * 0.5; 
-                                            drawY = 0; 
-                                        } 
+                                        else if (CHARS_PUNCTUATION_TOP_RIGHT.includes(char)) {
+                                            const m = ctx.measureText(char);
+                                            const mode = region.punctAlign || 'half';
+                                            const currentCellHeight = item.h; // 预处理分配的高度
+
+                                            if (mode === 'center') {
+                                                // --- 几何居中 ---
+                                                drawX = (m.actualBoundingBoxLeft - m.actualBoundingBoxRight) / 2;
+                                                drawY = (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2;
+                                            } else {
+                                                // 1. 水平定位：保持贴右边界
+                                                drawX = (fSize / 2) - m.actualBoundingBoxRight;
+                                                
+                                                // 2. 垂直定位：默认以“右上半格”为基准
+                                                // 此时 drawY 会让标点顶端对齐当前格子的中心点（即上半格的顶）
+                                                drawY = m.actualBoundingBoxAscent + (fSize * 0.05);
+                                                
+                                                // 如果是 full 模式，由于格子变大了，我们可能需要额外的微调（如你之前提议的位移补偿）
+                                                if (mode === 'full') {
+                                                    drawY -= (fSize * 0.5); 
+                                                }
+                                            }
+                                        }
                                         else if (HALF_WIDTH_PUNCTUATION_TOP_RIGHT.includes(char)) { drawX = fSize * 0.3; drawY = -fSize * 0.4; }
                                         else if (CHARS_SMALL_KANA_TOP_RIGHT.includes(char)) { drawX = fSize * 0.1; drawY = -fSize * 0.15; }
                                     }
@@ -4228,23 +4298,29 @@
                             ctx.font = `${tok.style.italic===true?'italic ':''} ${tok.style.bold ? 'bold' : effectiveWeight} ${fSize}px ${tok.style.font || effectiveFont.replace(/"/g,'')}`;
                             
                             tok.charDetails = []; // 挂载详情供渲染使用
-
+                            const mode = region.punctAlign || 'half';
+                            // --- 修改后的横排步进逻辑 ---
                             for (let i = 0; i < tok.text.length; i++) {
-                                const char = tok.text[i]; 
+                                const char = tok.text[i];
+                                let visualWidth;
+
                                 const cW = ctx.measureText(char).width; 
                                 const spacing = letterSpacingPx + (tok.style.kerning || 0) * fSize;
                                 
-                                let visualWidth, isSymmetric = false;
+                                isSymmetric = false;
 
-                                // 判定对称标点 (括号等)
-                                if (CHARS_SYMMETRIC_HALF.includes(char) || CHARS_PUNCT.includes(char)) {
-                                    isSymmetric = true;
-                                    visualWidth = fSize * 0.5; // 强制占用半宽格子
-                                } else if (CHARS_HORIZONTAL_COMPRESSION.includes(char)) {
-                                    visualWidth = cW * 0.5; // 普通压缩标点
+                                // 在横排预处理循环内
+                                
+
+                                if (TARGET_PUNCTS.includes(char)) {
+                                    // 只有 half 模式才压缩宽度，center 和 full 都占 1.0f
+                                    visualWidth = (mode === 'half') ? fSize * 0.5 : fSize * 1.0;
+                                } else if (CHARS_SYMMETRIC_HALF.includes(char)) {
+                                    visualWidth = fSize * 0.5;
                                 } else {
-                                    visualWidth = cW; // 普通文字
+                                    visualWidth = ctx.measureText(char).width;
                                 }
+
 
                                 const advance = visualWidth + spacing;
                                 w += advance;
@@ -4334,28 +4410,52 @@
                                 tok.charDetails.forEach(item => {
                                     const char = item.char;
                                     const slotWidth = item.visualWidth;
+                                    let drawCenterX = currentX + slotWidth / 2; // 默认槽位中心
+                                    let drawX = 0;
+                                    let drawY = 0;
 
-                                    let drawCenterX = currentX + slotWidth / 2; 
+                                    const m = ctx.measureText(char);
+                                    const mode = region.punctAlign || 'half';
+                                    const pad = fSize * 0.05; // 呼吸感间距补偿
 
-                                    if (item.isSymmetric) {
+                                    // 1. 定义判定条件
+                                    const isPunctuation = TARGET_PUNCTS.includes(char); // 。，、
+                                    const isClosing = CHARS_CLOSING.includes(char);     // 〉）】》』」｝〟
+                                    const isOpening = CHARS_OPENING.includes(char);     // 〈（【《『「｛〝
+
+                                    if (isPunctuation) {
+                                        const m = ctx.measureText(char);
+                                        const mode = region.punctAlign || 'half';
+                                        const pad = fSize * 0.05;
+
+                                        if (mode === 'half') {
+                                            // 【核心修复】由于 drawCenterX 已经在 0.25em 处 fSize * 0.5 - 
+                                            // 距离 1.0em 格子的左边缘只需要向左移动 0.25em + m.actualBoundingBoxDescent 
+                                            // drawX = (-fSize * 0.5) + m.actualBoundingBoxLeft; -fSize * 0.5 + 
+                                            // drawY = (fSize * 0.5) - m.actualBoundingBoxDescent; (-fSize * 0.5)  +(m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2
+                                            drawX = fSize * 0.25 + m.actualBoundingBoxLeft;
+                                            drawY = 0;
+                                        } else if (mode === 'center') {
+                                            // 【核心修复】居中模式通常指在全宽（1.0em）格子中居中m.actualBoundingBoxDescent + 
+                                            // 需要从 0.25em 处向右移动 0.25em 达到全宽中心，再应用几何对齐
+                                            drawX = fSize * 0.5 + (m.actualBoundingBoxLeft - m.actualBoundingBoxRight) / 2;
+                                            drawY = -fSize * 0.5 + 2 * m.actualBoundingBoxDescent + (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2;
+                                        }
+                                    } else if (isClosing) {
+                                        // 后括号保持原本的槽位偏移逻辑
                                         const alignDist = (fSize - slotWidth) / 2;
-                                        // 使用你定义的常量，保持全局统一
-                                        const isPunctuation = CHARS_PUNCT.includes(char);
-                                        const isOpening = CHARS_OPENING.includes(char);
-                                        const isClosing = CHARS_CLOSING.includes(char);
-
-                                        // 句号、逗号、后括号：向右推 (+=)，紧贴左侧文字
-                                        if (isPunctuation || isClosing) {
-                                            drawCenterX += alignDist; 
-                                        }
-                                        // 前括号：向左拉 (-=)，紧贴右侧文字
-                                        else if (isOpening) {
-                                            drawCenterX -= alignDist;
-                                        }
+                                        drawCenterX += alignDist;
+                                    } else if (isOpening) {
+                                        const alignDist = (fSize - slotWidth) / 2;
+                                        drawCenterX -= alignDist;
                                     }
+
                                     ctx.save();
-                                    // 【核心改动】：对 translate 坐标取整
-                                    ctx.translate(Math.round(drawCenterX + (style.offX || 0)), Math.round(y + (style.offY || 0)));
+                                    // 【关键步】确保 drawX 和 drawY 被计入 translate
+                                    ctx.translate(
+                                        Math.round(drawCenterX + drawX + (style.offX || 0)), 
+                                        Math.round(y + drawY + (style.offY || 0))
+                                    );
                                     
                                     // 镜像处理逻辑
                                     if (style.mirror) {
@@ -4871,61 +4971,103 @@ ctx.translate(0, Math.round(charY));
             }
         });
         // --- [修改后] 批量加载函数：仅负责读取，不负责重新计算 ---
+        // --- 修正后的加载函数 ---
         async function loadFile(index) {
             if (index < 0 || index >= matchedFiles.length) return;
-            const item = matchedFiles[index];
+            
+            // 1. 进入加载状态，锁定唯一加载 ID
+            isPageLoading = true; 
+            const myLoadId = ++currentLoadingId; 
 
-            // 1. 同步 UI 页码
+            const item = matchedFiles[index];
             pageInput.value = index + 1;
             fileCounterTotal.textContent = `/ ${matchedFiles.length}`;
 
-            const img = new Image();
-            img.onload = async () => {
-                currentImage = img;
-                currentFileName = item.image.name.split('.')[0];
+            // 2. 【核心】瞬间清空所有残留，不给“脏数据”留机会
+            currentRepairImage = null;
+            currentMaskImage = null;
+            
+            // 物理清空蒙版与涂鸦画布
+            maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+            paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+            
+            // 同步更新文字区域数据 (JSON 核心数据)
+            regions = JSON.parse(JSON.stringify(item.regions));
+            
+            // 立即重绘一次（此时屏幕会瞬间变干净，只剩加载背景或原图）
+            draw();
 
-                // 【关键修复 1】先执行重置，这会清空所有画布
+            try {
+                // 3. 加载主原图
+                const img = new Image();
+                const mainImg = await new Promise((resolve, reject) => {
+                    img.onload = () => resolve(img);
+                    img.onerror = reject;
+                    img.src = URL.createObjectURL(item.image);
+                });
+
+                // 翻页保护：如果还没加载完就又点了一下，直接撤销
+                if (myLoadId !== currentLoadingId) return;
+
+                currentImage = mainImg;
+                currentFileName = item.image.name.split('.')[0];
                 resizeCanvas();
 
-                // 【关键修复 2】在重置之后再还原涂鸦，这样涂鸦才不会被洗掉
+                // 4. 异步加载修复图
+                if (item.repairImage) {
+                    const rImg = new Image();
+                    rImg.onload = () => {
+                        if (myLoadId === currentLoadingId) {
+                            currentRepairImage = rImg;
+                            draw(); 
+                        }
+                    };
+                    rImg.src = URL.createObjectURL(item.repairImage);
+                }
+
+                // 5. 异步加载蒙版数据 (mask_raw)
+                if (item.mask_raw) {
+                    loadMaskFromBase64(item.mask_raw).then(maskImg => {
+                        if (myLoadId === currentLoadingId) {
+                            currentMaskImage = maskImg;
+                            if (maskImg) {
+                                maskCanvas.width = maskImg.width;
+                                maskCanvas.height = maskImg.height;
+                                maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+                                maskCtx.drawImage(maskImg, 0, 0);
+                            }
+                            draw(); 
+                        }
+                    });
+                }
+
+                // 6. 异步加载涂鸦数据 (paint_raw)
                 if (item.paint_raw) {
                     const pImg = new Image();
                     pImg.onload = () => {
-                        paintCtx.drawImage(pImg, 0, 0);
-                        draw(); // 还原后重绘一次
+                        if (myLoadId === currentLoadingId) {
+                            paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+                            paintCtx.drawImage(pImg, 0, 0);
+                            draw();
+                        }
                     };
                     pImg.src = item.paint_raw;
                 }
 
-                // 加载修复图
-                if (item.repairImage) {
-                    const rImg = new Image();
-                    rImg.onload = () => {
-                        currentRepairImage = rImg;
-                        draw(); 
-                    };
-                    rImg.src = URL.createObjectURL(item.repairImage);
-                } else {
-                    currentRepairImage = null;
-                }
-
-                regions = JSON.parse(JSON.stringify(item.regions)); 
-                resetSidebar(); 
+                // 7. 完成加载任务
+                resetSidebar();
                 updateBatchNavUI();
-                
-                // 加载蒙版
-                if (item.mask_raw) {
-                    await loadMaskToCanvas(item.mask_raw);
-                    currentMaskImage = await loadMaskFromBase64(item.mask_raw);
-                } else {
-                    currentMaskImage = null;
-                    maskCanvas.width = 0; 
-                    maskCanvas.height = 0;
-                }
-                
+                isPageLoading = false;
                 draw();
-            };
-            img.src = URL.createObjectURL(item.image);
+
+            } catch (err) {
+                console.error("加载失败:", err);
+                isPageLoading = false;
+            }
+            // [核心新增] 在函数最后，确认新页面已就绪，重置脏检查标记
+            isCanvasDirty = false; 
+            isPageLoading = false;
+            draw();
         }
 
         // 翻页导航
@@ -4935,28 +5077,22 @@ ctx.translate(0, Math.round(charY));
         function navigateFiles(dir) {
             if (currentFileIndex === -1 || matchedFiles.length === 0) return;
 
-            // --- [核心功能：保存当前页修改到内存] ---
-            // 确保你在当前页挪动的大框位置、旋转角度被记录在 matchedFiles 数组中
-            if (matchedFiles[currentFileIndex]) {
-                // 使用深拷贝存入内存，保证数据独立
+            if (!isPageLoading && matchedFiles[currentFileIndex]) {
+                // 1. 文本数据比较轻量，可以每次都存
                 matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
-                // 【新增】翻页时记录涂鸦
-                matchedFiles[currentFileIndex].paint_raw = paintCanvas.toDataURL();
+
+                // 2. [核心改进] 只有画布“脏了”，才执行沉重的图片转换
+                if (isCanvasDirty) {
+                    console.log("检测到画布变动，正在保存快照...");
+                    matchedFiles[currentFileIndex].paint_raw = paintCanvas.toDataURL();
+                    matchedFiles[currentFileIndex].mask_raw = maskCanvas.toDataURL('image/png').split(',')[1];
+                }
             }
 
-            // --- [保留功能：计算新索引并检查上下限] ---
             const newIdx = currentFileIndex + dir;
-            
             if (newIdx >= 0 && newIdx < matchedFiles.length) {
-                // 在合法范围内，执行翻页
                 currentFileIndex = newIdx;
                 loadFile(currentFileIndex);
-            } else {
-                // --- [保留功能：越界反馈] ---
-                const message = dir > 0 ? "已经是最后一页了" : "已经是第一页了";
-                console.warn(message);
-                // 强制重置输入框数字，防止输入框数字与实际页码脱钩
-                pageInput.value = currentFileIndex + 1;
             }
         }
 
@@ -5015,6 +5151,7 @@ ctx.translate(0, Math.round(charY));
         // 彻底修复：全量图片导出逻辑 (支持每页蒙版合成)
         async function handleExport() {
             if (matchedFiles.length === 0) { exportImage(); return; }
+            syncMaskData();
             const btn = document.getElementById('btnExport');
             const originalText = btn.innerText;
             
@@ -5133,6 +5270,13 @@ ctx.translate(0, Math.round(charY));
         async function handleExportToDirectory() {
             if (matchedFiles.length === 0) return alert("请先批量导入项目文件夹！");
             
+            // --- 【核心修复】开始渲染导出前，同步当前页数据 ---
+            syncMaskData(); 
+            if (matchedFiles[currentFileIndex]) {
+                matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
+                matchedFiles[currentFileIndex].paint_raw = paintCanvas.toDataURL();
+            }
+
             try {
                 // 1. 弹出文件夹选择器
                 const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
@@ -5236,6 +5380,7 @@ ctx.translate(0, Math.round(charY));
         // 后台重建版单图导出（修复蒙版叠加逻辑）
         async function exportCurrentSingleImage() {
             if (!currentImage) return alert("无图片");
+            syncMaskData();
             const btn = document.getElementById('btnExportSingle');
             const originalText = btn.innerText;
 
@@ -5254,23 +5399,21 @@ ctx.translate(0, Math.round(charY));
                 // --- 修改后的 exportCurrentSingleImage 修复层逻辑 ---
                 if (currentRepairImage) {
                     if (ignoreMaskForRepair) {
-                        // 【全图模式】
                         offCtx.drawImage(currentRepairImage, 0, 0, offCanvas.width, offCanvas.height);
-                    } else if (currentMaskImage) {
-                        // 【蒙版模式】
+                    } else {
+                        // --- 【核心修改点】 ---
+                        // 不要判断 currentMaskImage，直接创建一个临时画布来合成
                         const mCanvas = document.createElement('canvas');
                         mCanvas.width = offCanvas.width;
                         mCanvas.height = offCanvas.height;
                         const mCtx = mCanvas.getContext('2d');
 
-                        mCtx.drawImage(currentMaskImage, 0, 0);
+                        // 【重点】：直接把当前屏幕上的 maskCanvas 画进去，它才是最新的！
+                        mCtx.drawImage(maskCanvas, 0, 0); 
+                        
                         mCtx.globalCompositeOperation = 'source-atop';
                         mCtx.drawImage(currentRepairImage, 0, 0);
-                        
                         offCtx.drawImage(mCanvas, 0, 0);
-                    } else {
-                        // 兜底：没有蒙版数据时直接画修复图
-                        offCtx.drawImage(currentRepairImage, 0, 0, offCanvas.width, offCanvas.height);
                     }
                 }
                 // --- 【新增】在文字层之前绘制涂鸦内容 ---
@@ -5905,7 +6048,11 @@ ctx.translate(0, Math.round(charY));
             activeRegionIndex = i;
             const r = regions[i];
             if (!r) return;
-
+            // 同步标点模式下拉框
+            const pAlignSelect = document.getElementById('punctAlignSelect');
+            // 【核心修改】：不再区分 v- 或 h- 前缀，统一回退到 'half' 
+            // 这样就能匹配你 HTML 中新定义的 <option value="half">
+            pAlignSelect.value = r.punctAlign || 'half';
             // --- A. 建立重置快照 (双框分开存储) ---
             r.transSnapshot = r.translation || "";      // 存储译文快照
             r.origSnapshot = [...(r.texts || [])];     // 存储原文快照 (深拷贝数组)
@@ -5995,7 +6142,8 @@ ctx.translate(0, Math.round(charY));
             propBtn.innerText = "属"; 
             propBtn.classList.remove('text-blue-400', 'border-blue-500/50');
 
-
+            // 确保 resetSidebar 也是这样写的：
+            document.getElementById('punctAlignSelect').value = activePunctAlign || 'half';
 
             // 填入当前的全局基准值
             lineSpacingInput.value = activeLineSpacing.toFixed(2);
@@ -6005,6 +6153,40 @@ ctx.translate(0, Math.round(charY));
             disableControls(); 
             updateColorSwatches();
         }
+        
+        // 1. 监听下拉框改变 (单框修改)
+        document.getElementById('punctAlignSelect').addEventListener('change', (e) => {
+            const val = e.target.value;
+            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
+                // 场景 A：选中了框，只改这一个
+                regions[activeRegionIndex].punctAlign = val;
+            } else {
+                // 场景 B：没选中框，更新全局默认值
+                activePunctAlign = val;
+            }
+            draw(); // 立即重绘画布查看效果
+        });
+
+
+        // 2. 强制全局应用按钮
+        document.getElementById('btnForcePunctAlign').addEventListener('click', () => {
+            const currentMode = document.getElementById('punctAlignSelect').value;
+            if (!confirm(`确定要将当前的标点模式 [${currentMode}] 强制应用到全书所有页面吗？`)) return;
+
+            // A. 修改当前页
+            regions.forEach(r => r.punctAlign = currentMode);
+            
+            // B. 修改内存中所有页 (针对批量模式)
+            if (matchedFiles && matchedFiles.length > 0) {
+                matchedFiles.forEach(file => {
+                    file.regions.forEach(r => r.punctAlign = currentMode);
+                });
+            }
+            
+            activePunctAlign = currentMode; // 更新全局基准
+            draw();
+            console.log("标点模式已全局应用:", currentMode);
+        });
 
         // 绑定画笔按钮
         // 找到 maskBrushBtn.onclick
@@ -6137,26 +6319,25 @@ ctx.translate(0, Math.round(charY));
         }
 
         /**
-         * 导出当前页面的 JSON 数据
-         * 包含所有排版、颜色、坐标属性
-         */
+        * 导出当前页面的 JSON 数据
+        * 包含所有排版、颜色、坐标属性
+        */
         function exportCurrentJson() {
             if (!regions || regions.length === 0) return alert("当前没有可导出的数据");
 
-            // 1. 导出前，先同步一下当前页面的最新状态到内存 (防止最后一次挪动没存上)
-            // if (matchedFiles[currentFileIndex]) {
-            //     matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
-            // }
+            // 必须执行同步，否则 mask_raw 永远是上一次翻页时的旧数据
+            syncMaskData(); 
 
-            // 2. 构建导出结构
-            // 这里导出的 regions 数组会包含你在编辑器里改过的每一个属性 (angle, box, blur, stroke 等)
+            if (matchedFiles[currentFileIndex]) {
+                matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
+            }
+
             const exportData = {
-                    regions: JSON.parse(JSON.stringify(regions)),
-                    // 【新增】保存当前页的蒙版和涂鸦
-                    mask_raw: matchedFiles[currentFileIndex]?.mask_raw || null,
-                    paint_raw: paintCanvas.toDataURL() 
-                };
-            // 3. 转换为 JSON 字符串并触发下载
+                regions: JSON.parse(JSON.stringify(regions)),
+                mask_raw: matchedFiles[currentFileIndex]?.mask_raw || null, // 此时已更新
+                paint_raw: paintCanvas.toDataURL() 
+            };
+
             const jsonStr = JSON.stringify(exportData, null, 2);
             const blob = new Blob([jsonStr], { type: "application/json" });
             const url = URL.createObjectURL(blob);
@@ -6176,10 +6357,13 @@ ctx.translate(0, Math.round(charY));
                 return;
             }
 
-            // 确保当前页的操作已同步到内存
+            // --- 【核心修复】在循环开始前，同步当前页所有最新数据 ---
+            syncMaskData(); // 同步蒙版擦除
             if (matchedFiles[currentFileIndex]) {
-                matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
+                matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions)); // 同步文本框
+                matchedFiles[currentFileIndex].paint_raw = paintCanvas.toDataURL(); // 同步涂鸦
             }
+
 
             const zip = new JSZip();
             
