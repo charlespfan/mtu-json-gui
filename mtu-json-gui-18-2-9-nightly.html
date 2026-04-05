@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v18.2.8)</title>
+    <title>MTU 嵌字编辑器 (v18.2.9)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
@@ -3867,19 +3867,7 @@
 
                                     const alignDist = (fSize - charH) / 2;
                                     
-                                    // 记录首字符的向上偏移量
-                                    // if (isFirstChar) {
-                                    //     if (isSymmetric || isPunct || CHARS_OPENING.includes(char)) {
-                                    //         firstAlignDist = alignDist;
-                                    //     }
-                                    //    isFirstChar = false;
-                                    // }
-                                    
-                                    // 持续更新末字符的向下偏移量
-                                    lastAlignDist = 0;
-                                    // if (CHARS_CLOSING.includes(char)) {
-                                    //     lastAlignDist = alignDist;
-                                    // }
+
 
                                     h += charH + letterSpacingPx + (tok.style.kerning || 0) * fSize;
                                 }
@@ -4052,7 +4040,7 @@
                                         // 只有 half 模式占 0.5，其余（full, center）均占 1.0
                                         h = (mode === 'half') ? fSize * 0.5 : fSize * 1.0;
                                     }
-                                    else if (CHARS_SYMMETRIC_HALF.includes(char) || isHalfWidth(char)) {
+                                    else if (CHARS_SYMMETRIC_HALF.includes(char)) {
                                         // 括号和其他压缩字符维持原有的半格逻辑
                                         h = fSize * 0.5;
                                     }
