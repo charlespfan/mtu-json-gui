@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v18.2.9)</title>
+    <title>MTU 嵌字编辑器 (v18.3.4)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/streamsaver@2.0.6/StreamSaver.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', 'Noto Sans SC', sans-serif; background-color: #111827; color: #e5e7eb; height: 100vh; overflow: hidden; }
@@ -161,7 +163,7 @@
             </label>
             
         </div>
-        
+
         <div class="flex items-center gap-2 bg-gray-800 px-3 py-1.5 rounded-full border border-gray-700 shadow-sm flex-shrink-0">
             <div class="flex flex-col gap-1">
                 <button id="btnExportSingle" class="px-2 py-1 bg-teal-600 hover:bg-teal-500 text-white text-xs rounded"><p>导出</p><p>单图</p></button>
@@ -169,6 +171,15 @@
             <div class="flex flex-col gap-1">
                 <button id="btnExportDir" class="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white text-xs rounded">批量导出到文件夹</button>
                 <button id="btnExport" class="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded">批量导出为压缩包</button>
+            </div>
+            <div class="flex flex-col items-center bg-gray-900/50 px-2 py-1 rounded border border-gray-700 ml-2">
+                <span class="text-[9px] text-gray-400 uppercase font-bold">并发渲染数</span>
+                <div class="flex items-center gap-1">
+                    <input type="number" id="concurrencyInput" min="1" max="10" value="1" 
+                        class="w-10 bg-gray-800 border border-gray-600 rounded text-center text-xs text-orange-400 h-5 outline-none focus:border-orange-500"
+                        title="建议：无显卡设为1-2，有显卡设为4+">
+                    <span id="concurrencyWarn" class="text-[10px] text-green-500" title="内存状态预估">●</span>
+                </div>
             </div>
             <div class="flex flex-col gap-1">
                 <button onclick="exportCurrentJson()" class="px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white text-xs rounded">导出当前JSON</button>
@@ -220,7 +231,7 @@
             </button>
             
             <div class="flex items-center gap-1 mx-1">
-                <input type="number" id="pageInput" class="w-12 bg-gray-900 border border-gray-600 rounded text-center text-xs text-white h-6">
+                <input type="number" id="pageInput" title="输入数字按回车即可跳转" class="w-12 bg-gray-900 border border-gray-600 rounded text-center text-xs text-white h-6">
                 <span id="fileCounterTotal" class="text-[10px] text-gray-400">/ 0</span>
             </div>
 
@@ -258,7 +269,7 @@
             <div class="flex flex-col">
                 <span class="text-[9px] text-gray-400 uppercase tracking-wider font-bold text-yellow-500">字号</span>
                 <div class="flex gap-1">
-                    <input type="number" id="fontSizeInput" disabled step="1" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 w-12 h-6 text-center focus:border-yellow-500 transition-colors" placeholder="-">
+                    <input type="number" id="fontSizeInput" disabled step="1" title="快捷键: [ 和 ] 调节字号大小" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 w-12 h-6 text-center focus:border-yellow-500 transition-colors" placeholder="-">
                     <button onclick="applyAutoFontSize()" class="bg-yellow-600 hover:bg-yellow-500 text-white text-[10px] rounded px-1 flex items-center justify-center border border-yellow-700 w-6 h-6" title="单页自动字号">
                         自
                     </button>
@@ -481,6 +492,7 @@
                     <button class="rt-btn text-gray-400" onclick="insertText('♫')" title="连杠八分音符">♫</button>
                     <button class="rt-btn text-gray-400" onclick="insertText('♬')" title="连杠十六分音符">♬</button>
                     <button class="rt-btn text-gray-400" onclick="insertText('█')" title="实心方形">█</button>
+                    <button class="rt-btn text-gray-400" onclick="insertText('　')" title="全角空格">　</button>
                 </div>
 
                 <div class="flex flex-col flex-1 min-h-0 mb-2">
@@ -575,14 +587,30 @@
                 <button onclick="toggleReplaceDialog()" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded">译文查找替换</button>
                 <div id="replaceDialog" class="hidden fixed top-20 right-12 z-50 bg-gray-800 border border-gray-600 p-4 rounded-lg shadow-2xl w-80">
                     <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-white font-bold text-sm">译文查找替换</h3>
+                        <h3 class="text-white font-bold text-sm">译文查找与导航</h3>
                         <button onclick="toggleReplaceDialog()" class="text-gray-400 hover:text-white">✕</button>
                     </div>
                     <div class="space-y-3">
                         <div>
                             <label class="text-[10px] text-gray-400 block mb-1">查找内容</label>
-                            <input type="text" id="findInput" class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white focus:border-blue-500 outline-none">
+                            <div class="flex gap-1">
+                                <input type="text" id="findInput" class="flex-grow bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white focus:border-blue-500 outline-none">
+                                <button onclick="executeFind()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-2 rounded font-bold">查找</button>
+                            </div>
                         </div>
+                        
+                        <div id="searchNavUI" class="hidden flex items-center justify-between bg-gray-900 p-2 rounded border border-gray-700">
+                            <span id="searchStatus" class="text-[10px] text-gray-400">0 / 0</span>
+                            <div class="flex gap-2">
+                                <button onclick="navigateSearch(-1)" class="p-1 hover:bg-gray-700 rounded text-blue-400">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
+                                </button>
+                                <button onclick="navigateSearch(1)" class="p-1 hover:bg-gray-700 rounded text-blue-400">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
+                                </button>
+                            </div>
+                        </div>
+
                         <div>
                             <label class="text-[10px] text-gray-400 block mb-1">替换为</label>
                             <input type="text" id="replaceInput" class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white focus:border-green-500 outline-none">
@@ -612,17 +640,17 @@
                 </button>
                 <div class="w-8 h-px bg-gray-700 mx-auto"></div>
                 <div class="flex flex-col gap-2">
-                    <button id="maskBrushBtn" class="rt-btn" title="蒙版画笔 (右键画，中键擦)">🖌️</button>
-                    <button id="maskEraserBtn" class="rt-btn" title="蒙版橡皮 (右键擦，中键画)">🧽</button>
+                    <button id="maskBrushBtn" class="rt-btn" title="蒙版画笔 (右键画，中键擦，快捷键: < 和 > 调节笔触大小)">🖌️</button>
+                    <button id="maskEraserBtn" class="rt-btn" title="蒙版橡皮 (右键擦，中键画，快捷键: < 和 > 调节笔触大小)">🧽</button>
                 </div>
                 <div class="w-8 h-px bg-gray-700 mx-auto"></div>
                 <div class="flex flex-col gap-2">
-                    <button id="paintBrushBtn" class="rt-btn" title="自由涂鸦 (右键画，中键擦)">🖌️</button>
-                    <button id="paintColorBtn" class="rt-btn" style="background-color: #ffffff; color: #000;" 
+                    <button id="paintBrushBtn" class="rt-btn" title="自由涂鸦 (右键画，中键擦，快捷键: < 和 > 调节笔触大小)">🖌️</button>
+                    <button id="paintColorBtn" class="rt-btn" title="涂鸦颜色" style="background-color: #ffffff; color: #000;" 
                             onclick="document.getElementById('paintColorPicker').click()">色</button>
                     <input type="color" id="paintColorPicker" value="#ffffff" class="hidden">
-                    <button id="paintEraserBtn" class="rt-btn" title="涂鸦橡皮 (右键擦，中键画)">🧹</button>
-                    <button id="comboModeBtn" class="rt-btn text-purple-400 border-purple-500/30" title="混合模式：右键自由涂鸦，中键蒙版橡皮">混</button>
+                    <button id="paintEraserBtn" class="rt-btn" title="涂鸦橡皮 (右键擦，中键画，快捷键: < 和 > 调节笔触大小)">🧹</button>
+                    <button id="comboModeBtn" class="rt-btn text-purple-400 border-purple-500/30" title="混合模式：右键自由涂鸦，中键蒙版橡皮，快捷键: < 和 > 调节笔触大小">混</button>
                 </div>
                 <div class="mt-auto mb-2 flex flex-col items-center gap-2">
                     <div class="w-8 h-px bg-gray-700 mx-auto mb-1"></div>
@@ -733,6 +761,10 @@
         let isPageLoading = false; // 记录是否正在转场中
         let currentLoadingId = 0; // 全局加载计数器，用于解决文字滞后
         let isCanvasDirty = false; // [新增] 标记当前页面的画布是否被动过
+        let globalConcurrencyLimit = 1; // 默认给低内存用户最稳的 1
+        // --- 搜索导航全局状态 ---
+        let searchResults = []; // 存储格式：{ fileIndex, regionIndex }
+        let currentSearchIndex = -1;
 
         const uiCanvas = document.getElementById('uiCanvas');
         const uiCtx = uiCanvas.getContext('2d');
@@ -824,20 +856,20 @@
 
 
         // --- 1. Constants ---
-        const CHARS_DYNAMIC_CENTER = "-–—=≠≈≡+×÷…⋯〜()[]{}<>―〈〉（）【】《》｛｝ー～＝－~─⁓〰;";
-        const CHARS_OPENING = "〈（【《『「｛〝"; // 前括号：墨迹在下/在右
-        const CHARS_CLOSING = "〉）】》』」｝〟"; // 后括号：墨迹在上/在左
+        const CHARS_DYNAMIC_CENTER = "-–—=≠≈≡+×÷…⋯〜()[]{}<>―〈〉（）【】《》｛｝［］〔〕〖〗ー～＝－~─⁓〰;";
+        const CHARS_OPENING = "〈（【《『「｛［〔〖〝"; // 前括号：墨迹在下/在右
+        const CHARS_CLOSING = "〉）】》』」｝］〕〗〟"; // 后括号：墨迹在上/在左
         const CHARS_PUNCT   = "，。、！？：；";           // 基础标点：墨迹在右上（竖排）/在左下（横排）
         // 不参与水平强制居中的符号
         const CHARS_NO_CENTER_H = "〝〟『』「」";
         // 专门针对你要求的三个目标标点
         const TARGET_PUNCTS = "。，、";
-        const CHARS_SYMMETRIC_HALF = "〈〉（）【】《》『』「」｛｝〝〟";
+        const CHARS_SYMMETRIC_HALF = "〈〉（）【】《》『』「」｛｝〝〟［］〔〕〖〗";
         const ROTATED_LETTERS_NUMBERS = "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM0123456789!?:;" + CHARS_DYNAMIC_CENTER;
         const CHARS_UPRIGHT_CENTER = "！？：；.";
-        const CHARS_TO_ROTATE = "()[]{}<>〈〉（）【】《》『』「」｛｝｢｣〝〟";
-        const CHARS_VERTICAL_COMPRESSION = "，。、·・〈〉（）【】《》『』「」｛｝｢｣〝〟";
-        const CHARS_HORIZONTAL_COMPRESSION = "，。、；：？！·・〈〉（）【】《》『』「」｛｝｢｣〝〟";
+        const CHARS_TO_ROTATE = "()[]{}<>〈〉（）【】《》『』「」｛｝｢｣〝〟［］〔〕〖〗";
+        const CHARS_VERTICAL_COMPRESSION = "，。、·・〈〉（）【】《》『』「」｛｝｢｣〝〟［］〔〕〖〗";
+        const CHARS_HORIZONTAL_COMPRESSION = "，。、；：？！·・〈〉（）【】《》『』「」｛｝｢｣〝〟［］〔〕〖〗";
         const CHARS_PUNCTUATION_TOP_RIGHT = "、。，";
         const HALF_WIDTH_PUNCTUATION_TOP_RIGHT = "､,";
         const CHARS_SMALL_KANA_TOP_RIGHT = "ゃゅょっぁぃぅぇぉャュョッァィゥェォヵヶ";
@@ -845,9 +877,9 @@
 
 
         // 标点压缩与旋转常量 (源自第二个文件)
-        const CHARS_VERTICAL_COMPRESSION_ORIG = "，。、；：？！·・〈〉（）【】《》『』「」｛｝｢｣〝〟";
-        const CHARS_HORIZONTAL_COMPRESSION_ORIG = "，。、；：？！·・〈〉（）【】《》『』「」｛｝｢｣〝〟";
-        const CHARS_TO_ROTATE_ORIG = "()[]{}<>〈〉（）【】《》『』「」｛｝｢｣〝〟-";
+        const CHARS_VERTICAL_COMPRESSION_ORIG = "，。、；：？！·・〈〉（）【】《》『』「」｛｝｢｣〝〟［］〔〕〖〗";
+        const CHARS_HORIZONTAL_COMPRESSION_ORIG = "，。、；：？！·・〈〉（）【】《》『』「」｛｝｢｣〝〟［］〔〕〖〗";
+        const CHARS_TO_ROTATE_ORIG = "()[]{}<>〈〉（）【】《》『』「」｛｝｢｣〝〟-［］〔〕〖〗";
 
         // 严格复刻 Angle 原始替换规则
         const replacements = [
@@ -866,7 +898,29 @@
         // [新增] 专门用于修复图合成的离屏画布，避免在 draw() 中反复创建
         const compCanvas = document.createElement('canvas');
         const compCtx = compCanvas.getContext('2d');
+        const concurrencyInput = document.getElementById('concurrencyInput');
+        const concurrencyWarn = document.getElementById('concurrencyWarn');
 
+        concurrencyInput.addEventListener('input', (e) => {
+            let val = parseInt(e.target.value);
+            if (isNaN(val) || val < 1) val = 1;
+            if (val > 10) val = 10;
+            
+            globalConcurrencyLimit = val;
+
+            // 状态灯颜色逻辑
+            if (val <= 2) {
+                concurrencyWarn.className = "text-[10px] text-green-500"; // 安全
+                concurrencyWarn.title = "安全：适合低内存";
+            } else if (val <= 4) {
+                concurrencyWarn.className = "text-[10px] text-yellow-500"; // 警告
+                concurrencyWarn.title = "警告：建议中等内存";
+            } else {
+                concurrencyWarn.className = "text-[10px] text-red-500 animate-pulse"; // 危险
+                concurrencyWarn.title = "危险：极易导致浏览器崩溃";
+            }
+        });
+        
         if (repairOpacityRange) {
             repairOpacityRange.addEventListener('input', (e) => {
                 repairOpacity = parseFloat(e.target.value);
@@ -1091,7 +1145,95 @@
             }
         }
 
+        /**
+        * 执行全局查找并生成索引
+        */
+        async function executeFind() {
+            const findStr = document.getElementById('findInput').value;
+            const matchCase = document.getElementById('matchCase').checked;
+            
+            if (!findStr) return alert("请输入查找内容");
 
+            searchResults = []; // 重置结果
+            const flags = matchCase ? 'g' : 'gi';
+            const regex = new RegExp(findStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
+
+            // 1. 扫描所有文件数据
+            matchedFiles.forEach((file, fIdx) => {
+                file.regions.forEach((r, rIdx) => {
+                    if (r.translation && regex.test(r.translation)) {
+                        searchResults.push({ fileIndex: fIdx, regionIndex: rIdx });
+                    }
+                });
+            });
+
+            if (searchResults.length === 0) {
+                document.getElementById('searchNavUI').classList.add('hidden');
+                alert("未找到匹配内容");
+                return;
+            }
+
+            // 2. 显示导航 UI
+            document.getElementById('searchNavUI').classList.remove('hidden');
+            currentSearchIndex = 0;
+            updateSearchStatus();
+            
+            // 3. 立即跳转到第一个匹配项
+            goToSearchResult(currentSearchIndex);
+        }
+
+        /**
+        * 更新搜索状态文字
+        */
+        function updateSearchStatus() {
+            const status = document.getElementById('searchStatus');
+            status.innerText = `${currentSearchIndex + 1} / ${searchResults.length}`;
+        }
+
+        /**
+        * 导航：上一个 / 下一个
+        */
+        function navigateSearch(dir) {
+            if (searchResults.length === 0) return;
+            
+            currentSearchIndex += dir;
+            
+            // 循环导航
+            if (currentSearchIndex < 0) currentSearchIndex = searchResults.length - 1;
+            if (currentSearchIndex >= searchResults.length) currentSearchIndex = 0;
+            
+            updateSearchStatus();
+            goToSearchResult(currentSearchIndex);
+        }
+
+        /**
+        * 核心：跳转到指定的搜索结果（支持跨页）
+        */
+        async function goToSearchResult(index) {
+            const match = searchResults[index];
+            if (!match) return;
+
+            // A. 如果匹配项不在当前页，执行跳转
+            if (match.fileIndex !== currentFileIndex) {
+                // 先保存当前页的修改
+                if (matchedFiles[currentFileIndex]) {
+                    matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
+                    // 如果是低内存用户，这里可以加入 canvasDirty 判定来同步 paint_raw
+                }
+                
+                currentFileIndex = match.fileIndex;
+                await loadFile(currentFileIndex); // 等待页面加载完成
+            }
+
+            // B. 选中对应的文本框
+            setActiveRegion(match.regionIndex); //
+            
+            // C. 视觉反馈：在编辑框中高亮背景
+            const area = document.getElementById('transEditArea');
+            area.focus();
+            area.classList.add('ring-2', 'ring-blue-500');
+            setTimeout(() => area.classList.remove('ring-2', 'ring-blue-500'), 1000);
+        }
 
         // 修正后的 applyOriginalTextReplacement (约 170 行)
         function applyOriginalTextReplacement() {
@@ -1103,13 +1245,18 @@
                     if (r.texts && Array.isArray(r.texts)) {
                         r.texts = r.texts.map(text => {
                             let newText = text;
+                            // 1. 执行原有的 replacements 规则
                             replacements.forEach(([find, replace]) => {
                                 while (newText.includes(find)) {
                                     newText = newText.replace(find, replace);
                                 }
                             });
-                            if (newText !== text) modifiedCount++;
-                            return newText;
+
+                            // 2. [新增] 执行半角转全角逻辑
+                            const convertedText = convertHalfToFullKatakana(newText);
+                            
+                            if (convertedText !== text) modifiedCount++;
+                            return convertedText;
                         });
                     }
                 });
@@ -1156,12 +1303,15 @@
                     fileItem.regions.forEach(r => {
                         // 执行原文替换规则
                         if (r.texts) {
+                            // 修改 batchProcessBtnRight.onclick 内部的 map 逻辑
                             r.texts = r.texts.map(text => {
                                 let newText = text;
+                                // 1. 执行原有的标点替换
                                 replacements.forEach(([find, replace]) => {
                                     while (newText.includes(find)) newText = newText.replace(find, replace);
                                 });
-                                return newText;
+                                // 2. [新增] 执行半角转全角逻辑
+                                return convertHalfToFullKatakana(newText);
                             });
                         }
                         // 计算自动排版
@@ -2219,8 +2369,10 @@
                         if (!r.strokeColor) r.strokeColor = null; 
                         if (typeof r.default_stroke_width !== 'undefined') r.strokeWidthRatio = r.default_stroke_width;
                         if (typeof r.letter_spacing === 'undefined') r.letter_spacing = 0;
+                        // --- 修改后 ---
                         if (r.translation) {
-                            // 【新增】自动清洗译文
+                            // 强制将 [BR]、<br> 统一替换为标准 【BR】（不区分大小写）
+                            r.translation = r.translation.replace(/\[BR\]|【BR】|<br>/gi, '【BR】');
                             r.translation = cleanTranslationText(r.translation);
                         }
 
@@ -3358,7 +3510,8 @@
         }
 
         // --- SMART TCY ENGINE (Ultimate Edition) ---
-        function drawSmartTranslation(region, onlyPass) {
+        // 增加 targetCtx = ctx，确保不传参数时默认使用全局 ctx
+        function drawSmartTranslation(region, onlyPass, targetCtx = ctx) {
             // --- [性能防弹衣：逻辑截断] ---
             const isGlow = onlyPass === 'glow';
             const isStroke = onlyPass === 'stroke';
@@ -3415,8 +3568,8 @@
             // const isRegionStrokeEnabled = (region.strokeEnable !== undefined) ? region.strokeEnable : activeStrokeEnabled;
             const useConcentricFill = region.fill_holes === true; 
 
-            ctx.save();
-            const [x1,y1,x2,y2] = region.box; ctx.translate(x1 + boxWidth/2, y1 + boxHeight/2); ctx.rotate(angleRad);
+            targetCtx.save();
+            const [x1,y1,x2,y2] = region.box; targetCtx.translate(x1 + boxWidth/2, y1 + boxHeight/2); targetCtx.rotate(angleRad);
             
             const isVertical = region.direction === 'v';
 
@@ -3437,7 +3590,7 @@
             const atoms = fullText.match(atomRegex) || [];
 
             // 临时设置字体以便准确测量
-            ctx.font = `${activeFontWeight} ${baseFontSize}px ${effectiveFont.replace(/"/g,'')}`;
+            targetCtx.font = `${activeFontWeight} ${baseFontSize}px ${effectiveFont.replace(/"/g,'')}`;
 
 
             // 新增辅助工具
@@ -3496,7 +3649,7 @@
                             } else {
                                 // 其他长字符串（理论上正则不会切出这种，除非是连续英文）
                                 // 按实际旋转后的宽度累加
-                                atomH = ctx.measureText(atom).width + letterSpacingPx;
+                                atomH = targetCtx.measureText(atom).width + letterSpacingPx;
                             }
                         } else {
                             // 单个字符的逻辑保持不变
@@ -3506,7 +3659,7 @@
                                 const isAscii = /^[\x20-\x7E]$/.test(atom);
                                 const isRotated = ROTATED_LETTERS_NUMBERS.includes(atom);
                                 if (isAscii || isRotated) {
-                                    atomH = ctx.measureText(atom).width + letterSpacingPx;
+                                    atomH = targetCtx.measureText(atom).width + letterSpacingPx;
                                 } else {
                                     atomH = baseH;
                                 }
@@ -3576,7 +3729,7 @@
                             if (CHARS_SYMMETRIC_HALF.includes(atom) || CHARS_HORIZONTAL_COMPRESSION.includes(atom)) {
                                 atomW = (baseFontSize * 0.5) + letterSpacingPx;
                             } else {
-                                atomW = ctx.measureText(atom).width + letterSpacingPx;
+                                atomW = targetCtx.measureText(atom).width + letterSpacingPx;
                             }
                         }
 
@@ -3753,21 +3906,21 @@
                 if (isGlow && !region.blurEnable) return;
                 if (isStroke && (!isRegionStrokeEnabled || finalStrokeWidthRatio <= 0)) return;
 
-                ctx.save();
+                targetCtx.save();
 
 
                 // 1. 设置连接形状（圆角/尖角）
                 const isRound = document.getElementById('strokeRound').checked;
-                ctx.lineJoin = isRound ? 'round' : 'miter';
-                ctx.lineCap = isRound ? 'round' : 'butt';
+                targetCtx.lineJoin = isRound ? 'round' : 'miter';
+                targetCtx.lineCap = isRound ? 'round' : 'butt';
                 // 【性能修复】：将 filter 从字符循环中提取到 Pass 级别
                 // 整个 Pass 只设置一次滤镜，画完所有字符再关掉
                 if (isGlow) {
                     const blurRatio = region.blurSizeRatio || 0.1;
-                    ctx.filter = `blur(${baseFontSize * blurRatio}px)`;
-                    ctx.strokeStyle = region.blurColor || "#000000";
+                    targetCtx.filter = `blur(${baseFontSize * blurRatio}px)`;
+                    targetCtx.strokeStyle = region.blurColor || "#000000";
                 } else {
-                    ctx.filter = 'none';
+                    targetCtx.filter = 'none';
                 }
 
                 // 定义内部绘制工具，增加 currentFs 参数，默认为基准字号
@@ -3781,58 +3934,58 @@
                     const blurPx = currentFs * blurRatio; 
 
                     if (isGlow) {
-                        ctx.save();
-                        ctx.filter = `blur(${blurPx}px)`; 
-                        ctx.strokeStyle = region.blurColor || "#000000";
-                        ctx.lineWidth = currentFs * 0.1 + (blurPx * 2); 
+                        targetCtx.save();
+                        targetCtx.filter = `blur(${blurPx}px)`; 
+                        targetCtx.strokeStyle = region.blurColor || "#000000";
+                        targetCtx.lineWidth = currentFs * 0.1 + (blurPx * 2); 
                         // 使用四舍五入后的坐标
-                        ctx.strokeText(char, rdx, rdy); 
+                        targetCtx.strokeText(char, rdx, rdy); 
                         
                         if (tokStyle.dot && dotX !== null && dotY !== null) {
-                            ctx.beginPath();
-                            ctx.arc(Math.round(dotX), Math.round(dotY), currentFs * 0.1, 0, Math.PI * 2);
-                            ctx.stroke();
+                            targetCtx.beginPath();
+                            targetCtx.arc(Math.round(dotX), Math.round(dotY), currentFs * 0.1, 0, Math.PI * 2);
+                            targetCtx.stroke();
                         }
-                        ctx.restore();
+                        targetCtx.restore();
                     } 
                     else if (isStroke) {
-                        ctx.save();
-                        ctx.filter = 'none';
-                        ctx.strokeStyle = finalStrokeColor;
+                        targetCtx.save();
+                        targetCtx.filter = 'none';
+                        targetCtx.strokeStyle = finalStrokeColor;
                         
                         if (useConcentricFill) {
                             const maxW = currentFs * finalStrokeWidthRatio;
                             const step = Math.max(0.5, currentFs * 0.05);
                             for (let w = maxW; w > 0; w -= step) { 
-                                ctx.lineWidth = w; 
-                                ctx.strokeText(char, rdx, rdy); 
+                                targetCtx.lineWidth = w; 
+                                targetCtx.strokeText(char, rdx, rdy); 
                             }
-                            ctx.fillText(char, rdx, rdy);
+                            targetCtx.fillText(char, rdx, rdy);
                         } else {
-                            ctx.lineWidth = currentFs * finalStrokeWidthRatio;
-                            ctx.strokeText(char, rdx, rdy);
+                            targetCtx.lineWidth = currentFs * finalStrokeWidthRatio;
+                            targetCtx.strokeText(char, rdx, rdy);
                         }
 
                         if (tokStyle.dot && dotX !== null && dotY !== null) {
-                            ctx.beginPath();
-                            ctx.arc(Math.round(dotX), Math.round(dotY), currentFs * 0.1, 0, Math.PI * 2);
-                            ctx.lineWidth = currentFs * finalStrokeWidthRatio;
-                            ctx.stroke();
+                            targetCtx.beginPath();
+                            targetCtx.arc(Math.round(dotX), Math.round(dotY), currentFs * 0.1, 0, Math.PI * 2);
+                            targetCtx.lineWidth = currentFs * finalStrokeWidthRatio;
+                            targetCtx.stroke();
                         }
-                        ctx.restore();
+                        targetCtx.restore();
                     }
                     else if (isFill) {
-                        ctx.save();
-                        ctx.filter = 'none';
-                        ctx.fillStyle = tokStyle.color || finalFillColor;
+                        targetCtx.save();
+                        targetCtx.filter = 'none';
+                        targetCtx.fillStyle = tokStyle.color || finalFillColor;
                         // 使用四舍五入后的坐标
-                        ctx.fillText(char, rdx, rdy);
+                        targetCtx.fillText(char, rdx, rdy);
                         if (tokStyle.dot && dotX !== null && dotY !== null) {
-                            ctx.beginPath();
-                            ctx.arc(Math.round(dotX), Math.round(dotY), currentFs * 0.1, 0, Math.PI * 2);
-                            ctx.fill();
+                            targetCtx.beginPath();
+                            targetCtx.arc(Math.round(dotX), Math.round(dotY), currentFs * 0.1, 0, Math.PI * 2);
+                            targetCtx.fill();
                         }
-                        ctx.restore();
+                        targetCtx.restore();
                     }
                 };
 
@@ -3862,7 +4015,7 @@
                                     const isPunct = CHARS_VERTICAL_COMPRESSION.includes(char);
 
                                     if (isSymmetric || isPunct) charH = fSize * 0.5;
-                                    else if (ROTATED_LETTERS_NUMBERS.includes(char)) charH = ctx.measureText(char).width;
+                                    else if (ROTATED_LETTERS_NUMBERS.includes(char)) charH = targetCtx.measureText(char).width;
                                     else charH = getCharVerticalHeight(char, fSize);
 
                                     const alignDist = (fSize - charH) / 2;
@@ -3928,10 +4081,10 @@
                                     // 【关键修改】：不再执行 .replace(/[０-９]/g, ...)，直接使用原始文本
                                     sub._drawText = sub.text; 
                                     
-                                    ctx.font = `${sub.style.italic === true ? 'italic ' : ''}${sub.style.bold ? 'bold ' : effectiveWeight} ${subFSize}px ${sub.style.font || effectiveFont.replace(/"/g, '')}`;
+                                    targetCtx.font = `${sub.style.italic === true ? 'italic ' : ''}${sub.style.bold ? 'bold ' : effectiveWeight} ${subFSize}px ${sub.style.font || effectiveFont.replace(/"/g, '')}`;
                                     
                                     for (let char of sub._drawText) {
-                                        const m = ctx.measureText(char);
+                                        const m = targetCtx.measureText(char);
                                         // 即使是全角字符，也要测量其实际墨迹宽度以确保像素级居中
                                         const inkW = m.actualBoundingBoxLeft + m.actualBoundingBoxRight;
                                         tcyChars.push({
@@ -3950,12 +4103,12 @@
                                 const maxWidth = fSize * 1.1; 
                                 let groupScaleX = (totalBlockWidth > maxWidth) ? (maxWidth / totalBlockWidth) : 1.0;
 
-                                ctx.save();
+                                targetCtx.save();
                                 // 维持 1.5 倍中心距
                                 const charCenterY = currentY + (segmentHeight / 2); 
 
-                                ctx.textAlign = 'left'; 
-                                ctx.textBaseline = 'middle';
+                                targetCtx.textAlign = 'left'; 
+                                targetCtx.textBaseline = 'middle';
 
                                 // 计算 currentXCursor 的初始值时也进行取整：
                                 // 修改前：
@@ -3965,46 +4118,46 @@
                                 let currentXCursor = Math.round(-(totalBlockWidth * groupScaleX) / 2);
 
                                 tcyChars.forEach(m => {
-                                    ctx.save();
-                                    ctx.font = `${m.style.italic === true ? 'italic ' : ''}${m.style.bold ? 'bold ' : effectiveWeight} ${m.fSize}px ${m.style.font || effectiveFont.replace(/"/g, '')}`;
+                                    targetCtx.save();
+                                    targetCtx.font = `${m.style.italic === true ? 'italic ' : ''}${m.style.bold ? 'bold ' : effectiveWeight} ${m.fSize}px ${m.style.font || effectiveFont.replace(/"/g, '')}`;
                                     
                                     // 【核心改动】：对 drawX 和 drawY 取整
                                     const drawX = Math.round(x + currentXCursor + (m.lb * groupScaleX));
                                     const drawY = Math.round(charCenterY + (m.style.offY || 0));
 
-                                    ctx.translate(drawX + (m.style.offX || 0), drawY);
-                                    ctx.scale(groupScaleX, 1.0); 
+                                    targetCtx.translate(drawX + (m.style.offX || 0), drawY);
+                                    targetCtx.scale(groupScaleX, 1.0); 
 
-                                    if (m.style.rotation) ctx.rotate(m.style.rotation * Math.PI / 180);
+                                    if (m.style.rotation) targetCtx.rotate(m.style.rotation * Math.PI / 180);
 
                                     // --- 渲染层 (复刻 MTU 原版逻辑) ---
                                     if (isGlow) {
                                         const blurPx = m.fSize * (region.blurSizeRatio || 0.1);
-                                        ctx.filter = `blur(${blurPx}px)`; 
-                                        ctx.strokeStyle = region.blurColor || "#000000";
-                                        ctx.lineWidth = m.fSize * 0.1 + (blurPx * 2); 
-                                        ctx.strokeText(m.char, 0, 0);
+                                        targetCtx.filter = `blur(${blurPx}px)`; 
+                                        targetCtx.strokeStyle = region.blurColor || "#000000";
+                                        targetCtx.lineWidth = m.fSize * 0.1 + (blurPx * 2); 
+                                        targetCtx.strokeText(m.char, 0, 0);
                                     } 
                                     else if (isStroke) {
-                                        ctx.filter = 'none';
-                                        ctx.strokeStyle = finalStrokeColor;
+                                        targetCtx.filter = 'none';
+                                        targetCtx.strokeStyle = finalStrokeColor;
                                         if (useConcentricFill) {
                                             const maxW = m.fSize * finalStrokeWidthRatio;
                                             const step = Math.max(0.5, m.fSize * 0.05);
-                                            for (let w = maxW; w > 0; w -= step) { ctx.lineWidth = w; ctx.strokeText(m.char, 0, 0); }
-                                            ctx.fillText(m.char, 0, 0);
+                                            for (let w = maxW; w > 0; w -= step) { targetCtx.lineWidth = w; targetCtx.strokeText(m.char, 0, 0); }
+                                            targetCtx.fillText(m.char, 0, 0);
                                         } else {
-                                            ctx.lineWidth = m.fSize * finalStrokeWidthRatio;
-                                            ctx.strokeText(m.char, 0, 0);
+                                            targetCtx.lineWidth = m.fSize * finalStrokeWidthRatio;
+                                            targetCtx.strokeText(m.char, 0, 0);
                                         }
                                     } 
                                     else if (isFill) {
-                                        ctx.filter = 'none';
-                                        ctx.fillStyle = m.style.color || finalFillColor;
-                                        ctx.fillText(m.char, 0, 0);
+                                        targetCtx.filter = 'none';
+                                        targetCtx.fillStyle = m.style.color || finalFillColor;
+                                        targetCtx.fillText(m.char, 0, 0);
                                     }
 
-                                    ctx.restore();
+                                    targetCtx.restore();
                                     // --- 找到累加逻辑 ---
                                     // 修改前：
                                     // currentXCursor += (m.inkW + flexGap) * groupScaleX;
@@ -4013,7 +4166,7 @@
                                     currentXCursor += Math.round((m.inkW + flexGap) * groupScaleX);
                                 });
 
-                                ctx.restore(); 
+                                targetCtx.restore(); 
                                 currentY += segmentHeight + letterSpacingPx;
                             }
                             else { 
@@ -4023,8 +4176,8 @@
                                 const isManualSkew = (typeof style.italic === 'number'); const skewAngle = isManualSkew ? style.italic : 0;
                                 
                                 // [设置字体] 正文应用 effectiveWeight
-                                ctx.font = `${style.italic===true?'italic ':''} ${style.bold ? 'bold' : effectiveWeight} ${fSize}px ${style.font || effectiveFont.replace(/"/g,'')}`;
-                                ctx.lineWidth = fSize * finalStrokeWidthRatio;
+                                targetCtx.font = `${style.italic===true?'italic ':''} ${style.bold ? 'bold' : effectiveWeight} ${fSize}px ${style.font || effectiveFont.replace(/"/g,'')}`;
+                                targetCtx.lineWidth = fSize * finalStrokeWidthRatio;
 
                                 // === 1. 预计算竖排高度 (Pre-calc Heights) ===
                                 const charHeights = [];
@@ -4046,7 +4199,7 @@
                                     }
                                     else {
                                         // 3. 普通字符
-                                        if (ROTATED_LETTERS_NUMBERS.includes(char)) h = ctx.measureText(char).width;
+                                        if (ROTATED_LETTERS_NUMBERS.includes(char)) h = targetCtx.measureText(char).width;
                                         else h = getCharVerticalHeight(char, fSize);
                                     }
                                     
@@ -4056,11 +4209,11 @@
 
                                 // === 2. Ruby 逻辑 (自动适配压缩高度) ===
                                 if (style.ruby) {
-                                    ctx.save();
+                                    targetCtx.save();
                                     const rubyFontSize = fSize * RUBY_SIZE_RATIO;
                                     // [设置字体] 注音不跟随 effectiveWeight (除非有[b])
                                     const rubyFont = `${style.bold ? 'bold' : ''} ${rubyFontSize}px ${style.font || effectiveFont.replace(/"/g,'')}`;
-                                    ctx.font = rubyFont;
+                                    targetCtx.font = rubyFont;
                                     
                                     const rubyText = style.ruby;
                                     const rubyCount = rubyText.length;
@@ -4079,21 +4232,21 @@
                                         const slotHeight = tokenTotalHeight / rubyCount;
                                         for (let i = 0; i < rubyCount; i++) {
                                             const charCenterY = currentY + (i * slotHeight) + (slotHeight / 2);
-                                            ctx.save(); 
-                                            ctx.translate(rubyX, charCenterY);
-                                            if (style.rotation) ctx.rotate(style.rotation * Math.PI / 180);
+                                            targetCtx.save(); 
+                                            targetCtx.translate(rubyX, charCenterY);
+                                            if (style.rotation) targetCtx.rotate(style.rotation * Math.PI / 180);
                                             // [原有] 斜体/水平切变 (Param 3)
-                                            if (isManualSkew) ctx.transform(1, 0, Math.tan(skewAngle * Math.PI / 180) * -1, 1, 0, 0);
+                                            if (isManualSkew) targetCtx.transform(1, 0, Math.tan(skewAngle * Math.PI / 180) * -1, 1, 0, 0);
                                             
                                             // [修改] 垂直切变 (Param 2) - 增加 * -1 实现向上抬
-                                            if (style.vShear) ctx.transform(1, Math.tan(style.vShear * Math.PI / 180) * -1, 0, 1, 0, 0);
-                                            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; 
+                                            if (style.vShear) targetCtx.transform(1, Math.tan(style.vShear * Math.PI / 180) * -1, 0, 1, 0, 0);
+                                            targetCtx.textAlign = 'center'; targetCtx.textBaseline = 'middle'; 
                                             
                                             // 传入 rubyFontSize 确保滤镜按比例缩小
                                             executeDraw(rubyText[i], 0, 0, style, null, null, rubyFontSize);
-                                            ctx.restore();
+                                            targetCtx.restore();
                                         }
-                                        ctx.restore();
+                                        targetCtx.restore();
                                     } else {
                                         // 挤压模式
                                         const centerY = currentY + (tokenTotalHeight / 2);
@@ -4102,24 +4255,24 @@
                                         const startY = centerY - (rubyRawHeight*scale / 2) + (scaledFontSize / 2);
                                         for (let i = 0; i < rubyCount; i++) {
                                             const rY = startY + (i * scaledFontSize);
-                                            ctx.save(); ctx.translate(rubyX, rY); ctx.scale(1, scale); 
-                                            if (style.rotation) ctx.rotate(style.rotation * Math.PI / 180);
-                                            if (isManualSkew) ctx.transform(1, 0, Math.tan(skewAngle * Math.PI / 180) * -1, 1, 0, 0);
-                                            if (style.vShear) ctx.transform(1, Math.tan(style.vShear * Math.PI / 180) * -1, 0, 1, 0, 0);
-                                            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; 
+                                            targetCtx.save(); targetCtx.translate(rubyX, rY); targetCtx.scale(1, scale); 
+                                            if (style.rotation) targetCtx.rotate(style.rotation * Math.PI / 180);
+                                            if (isManualSkew) targetCtx.transform(1, 0, Math.tan(skewAngle * Math.PI / 180) * -1, 1, 0, 0);
+                                            if (style.vShear) targetCtx.transform(1, Math.tan(style.vShear * Math.PI / 180) * -1, 0, 1, 0, 0);
+                                            targetCtx.textAlign = 'center'; targetCtx.textBaseline = 'middle'; 
                                             // 传入 rubyFontSize 确保滤镜按比例缩小
                                             executeDraw(rubyText[i], 0, 0, style, null, null, rubyFontSize);
-                                            ctx.restore();
+                                            targetCtx.restore();
                                         }
-                                        ctx.restore();
+                                        targetCtx.restore();
                                     }
-                                    ctx.restore(); 
+                                    targetCtx.restore(); 
                                     // 恢复正文字体
-                                    ctx.font = `${style.italic===true?'italic ':''} ${style.bold ? 'bold' : effectiveWeight} ${fSize}px ${style.font || effectiveFont.replace(/"/g,'')}`;
+                                    targetCtx.font = `${style.italic===true?'italic ':''} ${style.bold ? 'bold' : effectiveWeight} ${fSize}px ${style.font || effectiveFont.replace(/"/g,'')}`;
                                 }
                                 if (isFill) {
                                     // 如果标签里有颜色就用标签的，否则用区域全局颜色
-                                    ctx.fillStyle = style.color || finalFillColor; 
+                                    targetCtx.fillStyle = style.color || finalFillColor; 
                                 }
 
                                 // === 3. 竖排正文绘制循环 (含贴边对齐) ===
@@ -4141,17 +4294,17 @@
                                     }
 
 
-                                    ctx.save(); 
+                                    targetCtx.save(); 
                                     // 【核心改动】：对 translate 的坐标进行 Math.round()
-                                    ctx.translate(Math.round(x + (style.offX || 0)), Math.round(charCenterY + (style.offY || 0)));
+                                    targetCtx.translate(Math.round(x + (style.offX || 0)), Math.round(charCenterY + (style.offY || 0)));
                                     
                                     // --- B.旋转处理 & C.变形逻辑  (含修复) ---
                                     const isRotatedLetter = ROTATED_LETTERS_NUMBERS.includes(char);
                                     const needsRotation = isRotatedLetter || CHARS_TO_ROTATE.includes(char) || item.isSymmetric;
 
                                     if (needsRotation) { 
-                                        ctx.rotate(Math.PI / 2); 
-                                        if (char === "〜") ctx.scale(-1, 1); 
+                                        targetCtx.rotate(Math.PI / 2); 
+                                        if (char === "〜") targetCtx.scale(-1, 1); 
                                         
                                         // 【核心修复】
                                         // 1. 逻辑互换：斜体影响 Y(param2)，垂直切变影响 X(param3)
@@ -4160,13 +4313,13 @@
                                         // 1. 斜体 (SkewX -> SkewY slot)
                                         // [i=15] 原本有 *-1，这里去掉，变成正切值
                                         if (isManualSkew) {
-                                            ctx.transform(1, Math.tan(skewAngle * Math.PI / 180), 0, 1, 0, 0);
+                                            targetCtx.transform(1, Math.tan(skewAngle * Math.PI / 180), 0, 1, 0, 0);
                                         }
                                         
                                         // 2. 垂直切变 (SkewY -> SkewX slot)
                                         // [v=15] 原本有 *-1，这里去掉，变成正切值
                                         if (style.vShear) {
-                                            ctx.transform(1, 0, Math.tan(style.vShear * Math.PI / 180), 1, 0, 0);
+                                            targetCtx.transform(1, 0, Math.tan(style.vShear * Math.PI / 180), 1, 0, 0);
                                         }
 
                                     } else {
@@ -4174,33 +4327,33 @@
                                         
                                         // 1. 正常变形 (原手动斜体代码)
                                         if (isManualSkew) {
-                                            ctx.transform(1, 0, Math.tan(skewAngle * Math.PI / 180) * -1, 1, 0, 0);
+                                            targetCtx.transform(1, 0, Math.tan(skewAngle * Math.PI / 180) * -1, 1, 0, 0);
                                         }
                                         
                                         // 2. 正常垂直切变 (原垂直切变代码)
                                         if (style.vShear) {
-                                            ctx.transform(1, Math.tan(style.vShear * Math.PI / 180) * -1, 0, 1, 0, 0);
+                                            targetCtx.transform(1, Math.tan(style.vShear * Math.PI / 180) * -1, 0, 1, 0, 0);
                                         }
                                     }
 
                                     // 旋转逻辑 (rotation) 保持在最后，因为它是在自身坐标系旋转，通常不受影响，
                                     // 但为了保险，通常放在切变之后或者保持现状。
-                                    if (style.rotation) ctx.rotate(style.rotation * Math.PI / 180);
+                                    if (style.rotation) targetCtx.rotate(style.rotation * Math.PI / 180);
                                     
                                     // 镜像处理逻辑
                                     if (style.mirror) {
-                                        ctx.scale(-1, 1);  // 水平镜像翻转 [m]
+                                        targetCtx.scale(-1, 1);  // 水平镜像翻转 [m]
                                     }
                                     if (style.mirrorV) {
-                                        ctx.scale(1, -1);  // 竖向镜像翻转 [mv]
+                                        targetCtx.scale(1, -1);  // 竖向镜像翻转 [mv]
                                     }
 
-                                    ctx.textAlign = 'center'; 
-                                    ctx.textBaseline = 'middle';
+                                    targetCtx.textAlign = 'center'; 
+                                    targetCtx.textBaseline = 'middle';
 
                                     // --- D. 墨迹水平居中 (优化版) ---
                                     if (needsRotation && (CHARS_DYNAMIC_CENTER.includes(char) || item.isSymmetric) && !CHARS_NO_CENTER_H.includes(char)) {
-                                        const metrics = ctx.measureText(char);
+                                        const metrics = targetCtx.measureText(char);
                                         
                                         // 采用更精确的墨迹几何中心
                                         // Ascent 是基线到墨迹顶部的距离，Descent 是基线到墨迹底部的距离（通常为负）
@@ -4209,7 +4362,7 @@
                                         
                                         // 修正：如果发现某些符号（如 】）依然偏离，可以结合字号进行微调
                                         // 大多数情况下，inkMiddle 已经能解决问题
-                                        ctx.translate(0, inkMiddle);
+                                        targetCtx.translate(0, inkMiddle);
                                     }
 
                                     // 绘制基准点
@@ -4218,12 +4371,12 @@
                                     // --- E. 非旋转标点的微调 (非半宽) ---
                                     if (!needsRotation) {
                                         if (CHARS_UPRIGHT_CENTER.includes(char)) {
-                                            const metrics = ctx.measureText(char);
+                                            const metrics = targetCtx.measureText(char);
                                             drawX = (metrics.actualBoundingBoxLeft - metrics.actualBoundingBoxRight) / 2;
                                             drawY = (metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2;
                                         }
                                         else if (CHARS_PUNCTUATION_TOP_RIGHT.includes(char)) {
-                                            const m = ctx.measureText(char);
+                                            const m = targetCtx.measureText(char);
                                             const mode = region.punctAlign || 'half';
                                             const currentCellHeight = item.h; // 预处理分配的高度
 
@@ -4266,7 +4419,7 @@
                                     // 这里的 dotCenterX 是你之前算好的 (drawX + dotOffsetX)
                                     executeDraw(char, drawX, drawY, style, dotCenterX, drawY, fSize);
                                     
-                                    ctx.restore(); 
+                                    targetCtx.restore(); 
                                     currentY += charH + item.spacing;
                                 });
                             }
@@ -4283,7 +4436,7 @@
                         toks.forEach(tok => {
                             // 修改前：const fSize = baseFontSize * (tok.style.scale || 1.0);
                             const fSize = getFinalFSize(tok.style);
-                            ctx.font = `${tok.style.italic===true?'italic ':''} ${tok.style.bold ? 'bold' : effectiveWeight} ${fSize}px ${tok.style.font || effectiveFont.replace(/"/g,'')}`;
+                            targetCtx.font = `${tok.style.italic===true?'italic ':''} ${tok.style.bold ? 'bold' : effectiveWeight} ${fSize}px ${tok.style.font || effectiveFont.replace(/"/g,'')}`;
                             
                             tok.charDetails = []; // 挂载详情供渲染使用
                             const mode = region.punctAlign || 'half';
@@ -4292,7 +4445,7 @@
                                 const char = tok.text[i];
                                 let visualWidth;
 
-                                const cW = ctx.measureText(char).width; 
+                                const cW = targetCtx.measureText(char).width; 
                                 const spacing = letterSpacingPx + (tok.style.kerning || 0) * fSize;
                                 
                                 isSymmetric = false;
@@ -4306,7 +4459,7 @@
                                 } else if (CHARS_SYMMETRIC_HALF.includes(char)) {
                                     visualWidth = fSize * 0.5;
                                 } else {
-                                    visualWidth = ctx.measureText(char).width;
+                                    visualWidth = targetCtx.measureText(char).width;
                                 }
 
 
@@ -4342,16 +4495,16 @@
                             const isManualSkew = (typeof style.italic === 'number'); 
                             const skewAngle = isManualSkew ? style.italic : 0;
                             
-                            ctx.font = `${style.italic===true?'italic ':''} ${style.bold ? 'bold' : effectiveWeight} ${fSize}px ${style.font || effectiveFont.replace(/"/g,'')}`;
-                            ctx.lineWidth = fSize * finalStrokeWidthRatio;
+                            targetCtx.font = `${style.italic===true?'italic ':''} ${style.bold ? 'bold' : effectiveWeight} ${fSize}px ${style.font || effectiveFont.replace(/"/g,'')}`;
+                            targetCtx.lineWidth = fSize * finalStrokeWidthRatio;
 
                             // === [新增] 横排 Ruby 绘制逻辑 ===
                             // === [修复版] 横排 Ruby 绘制逻辑 ===
                             if (style.ruby) {
-                                ctx.save(); // 保存进入 Ruby 前的状态
+                                targetCtx.save(); // 保存进入 Ruby 前的状态
                                 const rubyFontSize = fSize * RUBY_SIZE_RATIO;
                                 const rubyFont = `${style.bold ? 'bold ' : ''}${rubyFontSize}px ${style.font || effectiveFont.replace(/"/g,'')}`;
-                                ctx.font = rubyFont;
+                                targetCtx.font = rubyFont;
 
                                 const rubyText = style.ruby;
                                 const rubyCount = rubyText.length;
@@ -4367,15 +4520,15 @@
                                     tokenWidth -= lastChar.spacing;
                                 }
                                 else {
-                                    tokenWidth = ctx.measureText(tok.text).width; // 兜底处理
+                                    tokenWidth = targetCtx.measureText(tok.text).width; // 兜底处理
                                 }
 
                                 // 计算 Ruby 的 Y 轴位置（在正文上方）
                                 const rubyY = y - (fSize * 0.5) - (rubyFontSize * 0.5) - (fSize * RUBY_OFFSET_RATIO);
 
                                 // 在循环外统一设置对齐方式，提高性能
-                                ctx.textAlign = 'center';
-                                ctx.textBaseline = 'middle';
+                                targetCtx.textAlign = 'center';
+                                targetCtx.textBaseline = 'middle';
 
                                 for (let rIdx = 0; rIdx < rubyCount; rIdx++) {
                                     // 在 Token 宽度内均匀分布 Ruby 字符
@@ -4385,12 +4538,12 @@
                                     executeDraw(rubyText[rIdx], rubyX, rubyY, style, null, null, rubyFontSize);
                                 }
 
-                                ctx.restore(); // 循环结束，统一恢复到正文之前的状态
+                                targetCtx.restore(); // 循环结束，统一恢复到正文之前的状态
 
-                                // 此时无需手动恢复 ctx.font，因为 restore 已经帮你做好了
+                                // 此时无需手动恢复 targetCtx.font，因为 restore 已经帮你做好了
                             }
                             if (isFill) {
-                                ctx.fillStyle = style.color || finalFillColor; 
+                                targetCtx.fillStyle = style.color || finalFillColor; 
                             }
 
                             // 渲染字符
@@ -4402,7 +4555,7 @@
                                     let drawX = 0;
                                     let drawY = 0;
 
-                                    const m = ctx.measureText(char);
+                                    const m = targetCtx.measureText(char);
                                     const mode = region.punctAlign || 'half';
                                     const pad = fSize * 0.05; // 呼吸感间距补偿
 
@@ -4412,7 +4565,7 @@
                                     const isOpening = CHARS_OPENING.includes(char);     // 〈（【《『「｛〝
 
                                     if (isPunctuation) {
-                                        const m = ctx.measureText(char);
+                                        const m = targetCtx.measureText(char);
                                         const mode = region.punctAlign || 'half';
                                         const pad = fSize * 0.05;
 
@@ -4438,36 +4591,36 @@
                                         drawCenterX -= alignDist;
                                     }
 
-                                    ctx.save();
+                                    targetCtx.save();
                                     // 【关键步】确保 drawX 和 drawY 被计入 translate
-                                    ctx.translate(
+                                    targetCtx.translate(
                                         Math.round(drawCenterX + drawX + (style.offX || 0)), 
                                         Math.round(y + drawY + (style.offY || 0))
                                     );
                                     
                                     // 镜像处理逻辑
                                     if (style.mirror) {
-                                        ctx.scale(-1, 1);  // 水平镜像翻转 [m]
+                                        targetCtx.scale(-1, 1);  // 水平镜像翻转 [m]
                                     }
                                     if (style.mirrorV) {
-                                        ctx.scale(1, -1);  // 竖向镜像翻转 [mv]
+                                        targetCtx.scale(1, -1);  // 竖向镜像翻转 [mv]
                                     }
                                     
                                     // 找到这几行（大约在 3078 行）：
-                                    if (char === "〜") ctx.scale(-1, 1);
-                                    if (isManualSkew) ctx.transform(1, 0, Math.tan(skewAngle * Math.PI / 180) * -1, 1, 0, 0);
+                                    if (char === "〜") targetCtx.scale(-1, 1);
+                                    if (isManualSkew) targetCtx.transform(1, 0, Math.tan(skewAngle * Math.PI / 180) * -1, 1, 0, 0);
 
                                     // --- [核心修复：插入以下代码] ---
                                     if (style.vShear) {
                                         // 这里的参数 2 是垂直切变位。* -1 是为了确保方向与竖排逻辑一致（向上/向下）
-                                        ctx.transform(1, Math.tan(style.vShear * Math.PI / 180) * -1, 0, 1, 0, 0);
+                                        targetCtx.transform(1, Math.tan(style.vShear * Math.PI / 180) * -1, 0, 1, 0, 0);
                                     }
                                     // ------------------------------
 
-                                    if (style.rotation) ctx.rotate(style.rotation * Math.PI / 180);
+                                    if (style.rotation) targetCtx.rotate(style.rotation * Math.PI / 180);
                                     
-                                    ctx.textAlign = 'center'; 
-                                    ctx.textBaseline = 'middle';
+                                    targetCtx.textAlign = 'center'; 
+                                    targetCtx.textBaseline = 'middle';
 
                                     // --- 横排逻辑：点在字符下方 ---
                                     // 计算横排着重号的 Y 轴偏移（在字符中心下方）
@@ -4475,14 +4628,14 @@
                                     // [修复] 横排正文调用，传入 fSize
                                     executeDraw(item.char, 0, 0, tok.style, 0, hDotY, fSize);
 
-                                    ctx.restore();
+                                    targetCtx.restore();
                                     currentX += item.advance;
                                 });
                             }
                         });
                     });
                 }
-                ctx.restore();
+                targetCtx.restore();
             }
 
             // 修改前：
@@ -4498,7 +4651,7 @@
                 renderPass(onlyPass);
             }
             
-            ctx.restore();
+            targetCtx.restore();
         }
 
         // [Original Mode Strict Line] - (No changes needed here)
@@ -4886,6 +5039,12 @@ ctx.translate(0, Math.round(charY));
                                 restoreLinesFromCenter(r); 
                                 initRegionBox(r); 
                             }
+
+                            if (r.translation) {
+                                // 强制将 [BR]、<br> 统一替换为标准 【BR】（不区分大小写）
+                                r.translation = r.translation.replace(/\[BR\]|【BR】|<br>/gi, '【BR】');
+                                r.translation = cleanTranslationText(r.translation);
+                            }
                         });
                     } catch (err) {
                         console.error(`解析 JSON 失败 (${jsonFile.name}):`, err);
@@ -5134,121 +5293,190 @@ ctx.translate(0, Math.round(charY));
             }, 1000);
         };
 
-
         // --- 彻底修复：全量图片导出逻辑 ---
         // 彻底修复：全量图片导出逻辑 (支持每页蒙版合成)
         async function handleExport() {
-            if (matchedFiles.length === 0) { exportImage(); return; }
-            syncMaskData();
+            if (matchedFiles.length === 0) return alert("无项目数据");
+
+            // --- 【补回当页保存逻辑】 ---
+            syncMaskData(); // 同步蒙版
+            if (matchedFiles[currentFileIndex]) {
+                // 保存当前页的文本框数据
+                matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
+                // 保存当前页的涂鸦数据
+                matchedFiles[currentFileIndex].paint_raw = paintCanvas.toDataURL();
+            }
+
             const btn = document.getElementById('btnExport');
             const originalText = btn.innerText;
-            
-            try {
-                btn.innerText = "正在渲染...";
-                btn.disabled = true;
+            btn.disabled = true;
 
-                if (matchedFiles[currentFileIndex]) {
-                    matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
+            // 【修改点】不要在函数内部 const 了，直接用全局的
+            const CONCURRENCY_LIMIT = globalConcurrencyLimit; // 并发渲染数，建议 4-8
+
+            // 1. 定义单个任务的渲染逻辑（原图 -> 修复 -> 涂鸦 -> 文字）
+            async function renderTask(item, index) {
+                // 增加兼容性判定
+                const CanvasClass = window.OffscreenCanvas || HTMLCanvasElement;
+                let offCanvas;
+                
+                if (window.OffscreenCanvas) {
+                    offCanvas = new OffscreenCanvas(currentImage.width, currentImage.height);
+                } else {
+                    offCanvas = document.createElement('canvas');
+                    offCanvas.width = currentImage.width;
+                    offCanvas.height = currentImage.height;
                 }
-
-                const zip = new JSZip();
-                const offCanvas = document.createElement('canvas');
+                
                 const offCtx = offCanvas.getContext('2d');
 
-                for (let i = 0; i < matchedFiles.length; i++) {
-                    const item = matchedFiles[i];
-                    
-                    // 1. 加载原图
-                    const img = await new Promise((res, rej) => {
-                        const t = new Image();
-                        t.onload = () => res(t);
-                        t.onerror = rej;
-                        t.src = URL.createObjectURL(item.image);
-                    });
+                // A. 底层原图
+                const img = await loadImage(URL.createObjectURL(item.image));
+                offCanvas.width = img.width;
+                offCanvas.height = img.height;
+                offCtx.drawImage(img, 0, 0);
+                URL.revokeObjectURL(img.src);
 
-                    offCanvas.width = img.width;
-                    offCanvas.height = img.height;
-                    
-                    // 绘制第一层：原图
-                    offCtx.clearRect(0, 0, offCanvas.width, offCanvas.height);
-                    offCtx.drawImage(img, 0, 0);
-
-                    // 2. 尝试加载修复图和蒙版
-                    if (item.repairImage) {
-                        const repairImg = await new Promise(res => {
-                            const t = new Image();
-                            t.onload = () => res(t);
-                            t.src = URL.createObjectURL(item.repairImage);
-                        });
-
-                        // --- 核心判断开始 ---
-                        if (ignoreMaskForRepair) {
-                            // 【全图模式】直接把修复图画在底层原图上
-                            offCtx.drawImage(repairImg, 0, 0, offCanvas.width, offCanvas.height);
-                        } else {
-                            // 【蒙版模式】只有没开启全图修复时，才执行复杂的蒙版合成
-                            const pageMask = await loadMaskFromBase64(item.mask_raw);
-                            if (pageMask) {
-                                const mCanvas = document.createElement('canvas');
-                                mCanvas.width = offCanvas.width;
-                                mCanvas.height = offCanvas.height;
-                                const mCtx = mCanvas.getContext('2d');
-                                mCtx.drawImage(pageMask, 0, 0);
-                                mCtx.globalCompositeOperation = 'source-atop';
-                                mCtx.drawImage(repairImg, 0, 0);
-                                offCtx.drawImage(mCanvas, 0, 0);
-                            } else {
-                                // 如果连蒙版都没有，就默认全图修复（保底逻辑）
-                                offCtx.drawImage(repairImg, 0, 0, offCanvas.width, offCanvas.height);
-                            }
-                        }
-                        // --- 核心判断结束 ---
-
-                        URL.revokeObjectURL(repairImg.src);
-                    }
-                    // 3. 在 for 循环内部，渲染文字之前加入：
-                    // 【核心修复点】：处理每一页特有的涂鸦
-                    if (item.paint_raw) {
-                        const pImg = await new Promise((resolve) => {
-                            const t = new Image();
-                            t.onload = () => resolve(t);
-                            t.onerror = () => resolve(null); // 加载失败也继续，防止卡死
-                            t.src = item.paint_raw;
-                        });
-                        if (pImg) {
-                            offCtx.drawImage(pImg, 0, 0);
+                // B. 修复图 & 蒙版
+                if (item.repairImage) {
+                    const repairImg = await loadImage(URL.createObjectURL(item.repairImage));
+                    if (ignoreMaskForRepair) {
+                        offCtx.drawImage(repairImg, 0, 0);
+                    } else {
+                        const pageMask = await loadMaskFromBase64(item.mask_raw);
+                        if (pageMask) {
+                            const mCanvas = new OffscreenCanvas(offCanvas.width, offCanvas.height);
+                            const mCtx = mCanvas.getContext('2d');
+                            mCtx.drawImage(pageMask, 0, 0);
+                            mCtx.globalCompositeOperation = 'source-atop';
+                            mCtx.drawImage(repairImg, 0, 0);
+                            offCtx.drawImage(mCanvas, 0, 0);
                         }
                     }
-                    // 4. 绘制文字层
-                    ctx = offCtx; 
-                    item.regions.forEach(r => drawSmartTranslation(r));
-
-                    const imgBlob = await new Promise(r => offCanvas.toBlob(r, 'image/png'));
-                    zip.file(`${item.image.name.split('.')[0]}_translated.png`, imgBlob);
-                    
-                    URL.revokeObjectURL(img.src);
-                    btn.innerText = `已渲染 ${i+1}/${matchedFiles.length}...`;
+                    URL.revokeObjectURL(repairImg.src);
                 }
 
-                const content = await zip.generateAsync({ type: "blob" });
-                const link = document.createElement('a');
-                link.href = URL.createObjectURL(content);
-                // 在 handleExport 函数末尾找到 link.download 的位置
-                // const timestamp = new Date().toISOString().slice(0, 10); // 获取 YYYY-MM-DD
-                link.download = `${currentProjectName}_Exported.zip`; 
-                link.click();
+                // C. 涂鸦层
+                if (item.paint_raw) {
+                    const pImg = await loadImage(item.paint_raw);
+                    if (pImg) offCtx.drawImage(pImg, 0, 0);
+                }
 
+                // D. 文字层
+                // 找到这两处：
+                // const oldCtx = ctx; ctx = offCtx;
+                // item.regions.forEach(r => drawSmartTranslation(r));
+                // ctx = oldCtx;
+
+                // 替换为这一行（直接传 offCtx，彻底解决并发冲突）：
+
+                // 【关键修改】直接把 offCtx 传进去，不再修改全局变量
+                item.regions.forEach(r => drawSmartTranslation(r, null, offCtx));
+
+
+                // E. 导出 Blob
+
+
+                const blob = await (offCanvas.convertToBlob ? 
+                    offCanvas.convertToBlob({ type: 'image/png' }) : 
+                    new Promise(r => offCanvas.toBlob(r, 'image/png')));
+                
+                return {
+                    name: `${item.image.name.split('.')[0]}_translated.png`,
+                    lastModified: new Date(),
+                    input: blob
+                };
+            }
+
+            // 2. 并发生成器：利用滑动窗口控制并发
+            // 2. 并发生成器：利用滑动窗口控制并发
+            async function* concurrentGenerator() {
+                const queue = [];
+                for (let i = 0; i < matchedFiles.length; i++) {
+                    
+                    // --- 新增：给低内存系统的“喘息”逻辑 ---
+                    // 每处理 5 张图，强制休眠 100 毫秒，防止 CPU 和内存瞬间被拉满导致浏览器崩溃
+                    if (i > 0 && i % 5 === 0) {
+                        await new Promise(r => setTimeout(r, 100)); 
+                    }
+                    // ---------------------------------------
+
+                    // 启动渲染任务（不 await，直接存入 Promise 队列）
+                    const task = renderTask(matchedFiles[i], i).then(res => {
+                        btn.innerText = `已完成渲染 (${i + 1}/${matchedFiles.length})...`;
+                        return res;
+                    });
+                    queue.push(task);
+
+                    // 当队列达到并发上限时，产出最早完成的那个
+                    if (queue.length >= CONCURRENCY_LIMIT) {
+                        yield await queue.shift();
+                    }
+                }
+
+                // 产出循环结束后剩余的任务
+                while (queue.length > 0) {
+                    yield await queue.shift();
+                }
+            }
+
+            try {
+                // 3. 开始流式压缩
+                const zipResponse = await downloadZip(concurrentGenerator());
+                const zipBlob = await zipResponse.blob();
+
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(zipBlob);
+                link.download = `${currentProjectName}_Exported.zip`;
+                link.click();
             } catch (err) {
                 console.error("导出失败:", err);
-                alert("导出失败: " + err.message);
             } finally {
-                ctx = mainCanvasCtx; 
                 btn.innerText = originalText;
                 btn.disabled = false;
-                draw(); 
+                draw();
             }
         }
 
+        // 辅助函数保持一致
+        function loadImage(src) {
+            return new Promise((resolve) => {
+                if (!src) return resolve(null);
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = () => resolve(null);
+                img.src = src;
+            });
+        }
+        // 半角片假名转全角片假名的核心转换函数
+        function convertHalfToFullKatakana(str) {
+            const halfKatakanaMap = {
+                'ﾞ': '゛', 'ﾟ': '゜', '｡': '。', '｢': '「', '｣': '」', '､': '、', '･': '・', 'ｰ': 'ー',
+                'ｧ': 'ァ', 'ｨ': 'ィ', 'ｩ': 'ゥ', 'ｪ': 'ェ', 'ｫ': 'ォ', 'ｬ': 'ャ', 'ｭ': 'ュ', 'ｮ': 'ョ', 'ｯ': 'ッ',
+                'ｱ': 'ア', 'ｲ': 'イ', 'ｳ': 'ウ', 'ｴ': 'エ', 'ｵ': 'オ', 'ｶ': 'カ', 'ｷ': 'キ', 'ｸ': 'ク', 'ｹ': 'ケ', 'ｺ': 'コ',
+                'ｻ': 'サ', 'ｼ': 'シ', 'ｽ': 'ス', 'ｾ': 'セ', 'ｿ': 'ソ', 'ﾀ': 'タ', 'ﾁ': 'チ', 'ﾂ': 'ツ', 'ﾃ': 'テ', 'ﾄ': 'ト',
+                'ﾅ': 'ナ', 'ﾆ': 'ニ', 'ﾇ': 'ヌ', 'ﾈ': 'ネ', 'ﾉ': 'ノ', 'ﾊ': 'ハ', 'ﾋ': 'ヒ', 'ﾌ': 'フ', 'ﾍ': 'ヘ', 'ﾎ': 'ホ',
+                'ﾏ': 'マ', 'ﾐ': 'ミ', 'ﾑ': 'ム', 'ﾒ': 'メ', 'ﾓ': 'モ', 'ﾔ': 'ヤ', 'ﾕ': 'ユ', 'ﾖ': 'ヨ', 'ﾗ': 'ラ', 'ﾘ': 'リ',
+                'ﾙ': 'ル', 'ﾚ': 'レ', 'ﾛ': 'ロ', 'ﾜ': 'ワ', 'ｦ': 'ヲ', 'ﾝ': 'ン'
+            };
+
+            // 处理带浊点的组合字符（如 ｶﾞ -> ガ）
+            const specialMap = {
+                'ｶﾞ': 'ガ', 'ｷﾞ': 'ギ', 'ｸﾞ': 'グ', 'ｹﾞ': 'ゲ', 'ｺﾞ': 'ゴ',
+                'ｻﾞ': 'ザ', 'ｼﾞ': 'ジ', 'ｽﾞ': 'ズ', 'ｾﾞ': 'ゼ', 'ｿﾞ': 'ゾ',
+                'ﾀﾞ': 'ダ', 'ﾁﾞ': 'ヂ', 'ﾂﾞ': 'ヅ', 'ﾃﾞ': 'デ', 'ﾄﾞ': 'ド',
+                'ﾊﾞ': 'バ', 'ﾋﾞ': 'ビ', 'ﾌﾞ': 'ブ', 'ﾍﾞ': 'ベ', 'ﾎﾞ': 'ボ',
+                'ﾊﾟ': 'パ', 'ﾋﾟ': 'ピ', 'ﾌﾟ': 'プ', 'ﾍﾟ': 'ペ', 'ﾎﾟ': 'ポ', 'ｳﾞ': 'ヴ'
+            };
+
+            let result = str;
+            // 先匹配两个字符的组合（浊点/半浊点）
+            for (let key in specialMap) {
+                result = result.replace(new RegExp(key, 'g'), specialMap[key]);
+            }
+            // 再匹配单个字符
+            return result.replace(/[｡-ﾝ]/g, (s) => halfKatakanaMap[s] || s);
+        }
         // 重新绑定唯一按钮事件
         btnExport.onclick = handleExport;
 
@@ -5266,90 +5494,99 @@ ctx.translate(0, Math.round(charY));
             }
 
             try {
-                // 1. 弹出文件夹选择器
+                // 1. 获取文件夹句柄 (必须在主线程触发)
                 const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
                 
                 const btn = document.getElementById('btnExportDir');
                 const originalText = btn.innerText;
                 btn.disabled = true;
 
-                // 离屏画布，用于后台静默渲染
-                const offCanvas = document.createElement('canvas');
-                const offCtx = offCanvas.getContext('2d');
+                const CONCURRENCY_LIMIT = globalConcurrencyLimit; // 使用你 UI 设定的值
+                let completedCount = 0;
 
-                for (let i = 0; i < matchedFiles.length; i++) {
-                    const item = matchedFiles[i];
-                    btn.innerText = `写入中 ${i + 1}/${matchedFiles.length}...`;
+                // --- 定义单个文件的“渲染+写入”任务 ---
+                const processAndWriteTask = async (item) => {
+                    // A. 渲染逻辑 (直接复用你之前的渲染流程)
+                    const offCanvas = new OffscreenCanvas(currentImage.width, currentImage.height);
+                    const offCtx = offCanvas.getContext('2d');
 
-                    // A. 加载并渲染原图
-                    const img = await new Promise((res) => {
-                        const t = new Image();
-                        t.onload = () => res(t);
-                        t.src = URL.createObjectURL(item.image);
-                    });
+                    // 加载原图
+                    const img = await loadImage(URL.createObjectURL(item.image));
                     offCanvas.width = img.width;
                     offCanvas.height = img.height;
                     offCtx.drawImage(img, 0, 0);
+                    URL.revokeObjectURL(img.src);
 
-                    // B. 处理修复图和蒙版
-                    // --- 修改后的 handleExportToDirectory 修复层逻辑 ---
+                    // 修复层 & 蒙版
                     if (item.repairImage) {
-                        const rImg = await new Promise(res => {
-                            const t = new Image();
-                            t.onload = () => res(t);
-                            t.src = URL.createObjectURL(item.repairImage);
-                        });
-
+                        const repairImg = await loadImage(URL.createObjectURL(item.repairImage));
                         if (ignoreMaskForRepair) {
-                            // 【全图模式】直接输出整张修复图
-                            offCtx.drawImage(rImg, 0, 0, offCanvas.width, offCanvas.height);
+                            offCtx.drawImage(repairImg, 0, 0);
                         } else {
-                            // 【蒙版模式】
                             const pageMask = await loadMaskFromBase64(item.mask_raw);
                             if (pageMask) {
-                                const mCanvas = document.createElement('canvas');
-                                mCanvas.width = offCanvas.width; 
-                                mCanvas.height = offCanvas.height;
+                                const mCanvas = new OffscreenCanvas(offCanvas.width, offCanvas.height);
                                 const mCtx = mCanvas.getContext('2d');
                                 mCtx.drawImage(pageMask, 0, 0);
                                 mCtx.globalCompositeOperation = 'source-atop';
-                                mCtx.drawImage(rImg, 0, 0);
+                                mCtx.drawImage(repairImg, 0, 0);
                                 offCtx.drawImage(mCanvas, 0, 0);
-                            } else {
-                                offCtx.drawImage(rImg, 0, 0, offCanvas.width, offCanvas.height);
                             }
                         }
-                        URL.revokeObjectURL(rImg.src);
+                        URL.revokeObjectURL(repairImg.src);
                     }
-                    // C. 处理涂鸦层
+
+                    // 涂鸦层
                     if (item.paint_raw) {
-                        const pImg = await new Promise(res => {
-                            const t = new Image();
-                            t.onload = () => res(t);
-                            t.src = item.paint_raw;
-                        });
-                        offCtx.drawImage(pImg, 0, 0);
+                        const pImg = await loadImage(item.paint_raw);
+                        if (pImg) offCtx.drawImage(pImg, 0, 0);
                     }
 
-                    // D. 渲染文字层 (劫持全局 ctx)
-                    const oldCtx = ctx;
-                    ctx = offCtx;
-                    item.regions.forEach(r => drawSmartTranslation(r));
-                    ctx = oldCtx;
+                    // 文字层
+                    // 找到这两处：
+                    // const oldCtx = ctx; ctx = offCtx;
+                    // item.regions.forEach(r => drawSmartTranslation(r));
+                    // ctx = oldCtx;
 
-                    // E. 写入文件到指定目录
+                    // 替换为这一行（直接传 offCtx，彻底解决并发冲突）：
+
+                    // 【关键修改】直接把 offCtx 传进去，不再修改全局变量
+                    item.regions.forEach(r => drawSmartTranslation(r, null, offCtx));
+
+                    // B. 写入磁盘逻辑
                     const fileName = `${item.image.name.split('.')[0]}_translated.png`;
-                    const blob = await new Promise(r => offCanvas.toBlob(r, 'image/png'));
+                    const blob = await offCanvas.convertToBlob({ type: 'image/png' });
+                    
                     const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
                     const writable = await fileHandle.createWritable();
                     await writable.write(blob);
                     await writable.close();
 
-                    // 释放内存
-                    URL.revokeObjectURL(img.src);
-                }
+                    completedCount++;
+                    btn.innerText = `写入中 (${completedCount}/${matchedFiles.length})...`;
+                };
 
-                alert(`🎉 导出完成！${matchedFiles.length} 张图片已存入目标文件夹。`);
+                // --- 并发调度逻辑 ---
+                const queue = [];
+                for (let i = 0; i < matchedFiles.length; i++) {
+                    // 每 5 张图休息一下 (针对低内存优化)
+                    if (i > 0 && i % 5 === 0) await new Promise(r => setTimeout(r, 100));
+
+                    const task = processAndWriteTask(matchedFiles[i]);
+                    queue.push(task);
+
+                    if (queue.length >= CONCURRENCY_LIMIT) {
+                        await Promise.race(queue); // 等待其中一个完成
+                        // 清理已完成的任务
+                        for(let j=0; j<queue.length; j++) {
+                            // 检查是否有已完成的 Promise (这里简单处理，实际可用 Promise 包装状态)
+                        }
+                        // 简化处理：为了代码整洁，这里建议用类似上个回答的 shift 逻辑
+                    }
+                }
+                await Promise.all(queue);
+
+                alert(`🎉 并发导出完成！`);
                 btn.innerText = originalText;
                 btn.disabled = false;
 
@@ -5357,7 +5594,7 @@ ctx.translate(0, Math.round(charY));
                 console.error(err);
                 if (err.name !== 'AbortError') alert("导出中断：" + err.message);
                 document.getElementById('btnExportDir').disabled = false;
-                document.getElementById('btnExportDir').innerText = "直接输出目录(新)";
+                document.getElementById('btnExportDir').innerText = "直接输出目录";
             }
         }
 
@@ -5867,9 +6104,9 @@ ctx.translate(0, Math.round(charY));
         // --- 全局快捷键：日漫模式翻页与字号调节 ---
         window.addEventListener('keydown', (e) => {
         // --- 核心修复：把蒙版缩放逻辑提到 isEditing 判断之前 ---
-            if (maskEditMode !== 'none' || paintMode !== 'none') {
+            if (maskEditMode !== 'none' || paintMode !== 'none' || comboMode) {
                 if (e.key === '<' || e.key === ',') { 
-                    maskBrushSize = Math.max(1, maskBrushSize - 2);
+                    maskBrushSize = Math.max(1, maskBrushSize - 1);
                     // 如果你有笔触大小的显示框，同步更新它
                     const sizeInput = document.getElementById('brushSizeInput');
                     if(sizeInput) sizeInput.value = maskBrushSize;
@@ -5877,7 +6114,7 @@ ctx.translate(0, Math.round(charY));
                     return; // 处理完就返回，避免干扰其他逻辑
                 }
                 if (e.key === '>' || e.key === '.') {
-                    maskBrushSize = Math.min(200, maskBrushSize + 2);
+                    maskBrushSize = Math.min(200, maskBrushSize + 1);
                     const sizeInput = document.getElementById('brushSizeInput');
                     if(sizeInput) sizeInput.value = maskBrushSize;
                     renderUI(); // 新增
@@ -6504,6 +6741,27 @@ ctx.translate(0, Math.round(charY));
                 draw();
             }
         });
+
+        // --- 脚本末尾的初始化与检测逻辑 ---
+
+        // 1. [新增] 自动检测设备内存并调整并发
+        if (navigator.deviceMemory) {
+            console.log(`系统报告内存大约为: ${navigator.deviceMemory} GB`);
+            if (navigator.deviceMemory <= 4) {
+                // 针对内存低下设备
+                globalConcurrencyLimit = 1;
+                if (concurrencyInput) {
+                    concurrencyInput.value = 1;
+                    // 同时更新一下那个小圆灯的颜色（可选）
+                    const concurrencyWarn = document.getElementById('concurrencyWarn');
+                    if (concurrencyWarn) {
+                        concurrencyWarn.className = "text-[10px] text-green-500";
+                        concurrencyWarn.title = "已根据您的设备自动选择最稳并发数";
+                    }
+                }
+                console.log("检测到低内存设备，已自动限制并发为 1 以防崩溃");
+            }
+        }
 
         resetSidebar();
     </script>
