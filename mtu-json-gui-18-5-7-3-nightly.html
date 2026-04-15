@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v18.3.4)</title>
+    <title>MTU 嵌字编辑器 (v18.5.7.3)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -593,12 +593,10 @@
                     <div class="space-y-3">
                         <div>
                             <label class="text-[10px] text-gray-400 block mb-1">查找内容</label>
-                            <div class="flex gap-1">
-                                <input type="text" id="findInput" class="flex-grow bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white focus:border-blue-500 outline-none">
+                            <div class="flex gap-1"> <input type="text" id="findInput" class="flex-grow bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white focus:border-blue-500 outline-none">
                                 <button onclick="executeFind()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-2 rounded font-bold">查找</button>
                             </div>
                         </div>
-                        
                         <div id="searchNavUI" class="hidden flex items-center justify-between bg-gray-900 p-2 rounded border border-gray-700">
                             <span id="searchStatus" class="text-[10px] text-gray-400">0 / 0</span>
                             <div class="flex gap-2">
@@ -610,11 +608,12 @@
                                 </button>
                             </div>
                         </div>
-
                         <div>
                             <label class="text-[10px] text-gray-400 block mb-1">替换为</label>
-                            <input type="text" id="replaceInput" class="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white focus:border-green-500 outline-none">
-                        </div>
+                            <div class="flex gap-1"> <input type="text" id="replaceInput" class="flex-grow bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-white focus:border-green-500 outline-none">
+                                <button onclick="executeSingleReplace()" class="bg-green-600 hover:bg-green-500 text-white text-xs px-2 rounded font-bold" title="替换当前项并跳到下一个">替换</button>
+                            </div>
+                        </div>    
                         <div class="flex items-center gap-2">
                             <input type="checkbox" id="matchCase" class="accent-blue-600">
                             <label for="matchCase" class="text-[10px] text-gray-300">区分大小写</label>
@@ -640,7 +639,7 @@
                 </button>
                 <div class="w-8 h-px bg-gray-700 mx-auto"></div>
                 <div class="flex flex-col gap-2">
-                    <button id="maskBrushBtn" class="rt-btn" title="蒙版画笔 (右键画，中键擦，快捷键: < 和 > 调节笔触大小)">🖌️</button>
+                    <button id="maskBrushBtn" class="rt-btn !hidden" title="蒙版画笔 (右键画，中键擦，快捷键: < 和 > 调节笔触大小)">🖌️</button>
                     <button id="maskEraserBtn" class="rt-btn" title="蒙版橡皮 (右键擦，中键画，快捷键: < 和 > 调节笔触大小)">🧽</button>
                 </div>
                 <div class="w-8 h-px bg-gray-700 mx-auto"></div>
@@ -649,8 +648,9 @@
                     <button id="paintColorBtn" class="rt-btn" title="涂鸦颜色" style="background-color: #ffffff; color: #000;" 
                             onclick="document.getElementById('paintColorPicker').click()">色</button>
                     <input type="color" id="paintColorPicker" value="#ffffff" class="hidden">
-                    <button id="paintEraserBtn" class="rt-btn" title="涂鸦橡皮 (右键擦，中键画，快捷键: < 和 > 调节笔触大小)">🧹</button>
+                    <button id="paintEraserBtn" class="rt-btn !hidden" title="涂鸦橡皮 (右键擦，中键画，快捷键: < 和 > 调节笔触大小)">🧹</button>
                     <button id="comboModeBtn" class="rt-btn text-purple-400 border-purple-500/30" title="混合模式：右键自由涂鸦，中键蒙版橡皮，快捷键: < 和 > 调节笔触大小">混</button>
+                    <button id="autoFillBtnRight" class="rt-btn text-green-400 border-green-500/30" title="自动背景填充：检测行框边缘并填充纯黑/纯白">填</button>
                 </div>
                 <div class="mt-auto mb-2 flex flex-col items-center gap-2">
                     <div class="w-8 h-px bg-gray-700 mx-auto mb-1"></div>
@@ -765,6 +765,11 @@
         // --- 搜索导航全局状态 ---
         let searchResults = []; // 存储格式：{ fileIndex, regionIndex }
         let currentSearchIndex = -1;
+        let selectedRegions = []; // 存储被选中的大框索引
+        // [新增] 记录最后获得焦点的输入框 ID，默认为译文栏
+        let lastActiveInputId = 'transEditArea';
+
+
 
         const uiCanvas = document.getElementById('uiCanvas');
         const uiCtx = uiCanvas.getContext('2d');
@@ -900,6 +905,206 @@
         const compCtx = compCanvas.getContext('2d');
         const concurrencyInput = document.getElementById('concurrencyInput');
         const concurrencyWarn = document.getElementById('concurrencyWarn');
+        // --- 自动背景填充功能实现 ---
+        // --- 自动背景填充功能（带 80% 阈值检测） ---
+        const autoFillBtnRight = document.getElementById('autoFillBtnRight');
+
+        autoFillBtnRight.onclick = async () => {
+            if (matchedFiles.length === 0) return alert("请先批量导入项目文件夹！");
+            const originalText = autoFillBtnRight.innerText;
+            autoFillBtnRight.innerText = "处理中...";
+            autoFillBtnRight.disabled = true;
+
+            const procCanvas = document.createElement('canvas');
+            const procCtx = procCanvas.getContext('2d');
+            const analysisCanvas = document.createElement('canvas');
+            const analysisCtx = analysisCanvas.getContext('2d');
+            const THRESHOLD = 0.7; 
+
+            // 辅助：检测区域内是否存在相反颜色
+            const hasOppositeColor = (ctx, poly, targetOpposite) => {
+                // 获取包围盒进行快速采样
+                let minX = Math.min(...poly.map(p => p[0])), maxX = Math.max(...poly.map(p => p[0]));
+                let minY = Math.min(...poly.map(p => p[1])), maxY = Math.max(...poly.map(p => p[1]));
+                const data = ctx.getImageData(minX, minY, maxX - minX, maxY - minY).data;
+                for (let i = 0; i < data.length; i += 16) { // 抽样检测提高性能
+                    const r = data[i], g = data[i+1], b = data[i+2];
+                    if (targetOpposite === 'black' && r < 60 && g < 60 && b < 60) return true;
+                    if (targetOpposite === 'white' && r > 200 && g > 200 && b > 200) return true;
+                }
+                return false;
+            };
+
+            for (let i = 0; i < matchedFiles.length; i++) {
+                const item = matchedFiles[i];
+                autoFillBtnRight.innerText = `处理 ${i + 1}/${matchedFiles.length}`;
+                const img = await loadImage(URL.createObjectURL(item.image));
+                analysisCanvas.width = img.width; analysisCanvas.height = img.height;
+                analysisCtx.drawImage(img, 0, 0);
+                URL.revokeObjectURL(img.src);
+
+                procCanvas.width = img.width; procCanvas.height = img.height;
+                procCtx.clearRect(0, 0, procCanvas.width, procCanvas.height);
+                if (item.paint_raw) {
+                    const oldPaint = await loadImage(item.paint_raw);
+                    if (oldPaint) procCtx.drawImage(oldPaint, 0, 0);
+                }
+
+                let pageChanged = false;
+
+                const drawAndClip = (regionLines, color, offset = {x: 0, y: 0}, skipFirst = false) => {
+                    procCtx.save();
+                    // 1. 填充
+                    procCtx.globalCompositeOperation = 'source-over';
+                    procCtx.fillStyle = color;
+                    regionLines.forEach((line, idx) => {
+                        if (skipFirst && idx === 0) return; // 跳过首行偏移
+                        procCtx.beginPath();
+                        procCtx.moveTo(line[0][0] + offset.x, line[0][1] + offset.y);
+                        for (let k = 1; k < line.length; k++) procCtx.lineTo(line[k][0] + offset.x, line[k][1] + offset.y);
+                        procCtx.closePath(); procCtx.fill();
+                    });
+                    // 2. 擦除圆角
+                    procCtx.globalCompositeOperation = 'destination-out';
+                    const first = regionLines[0], last = regionLines[regionLines.length - 1];
+                    const isV = item.regions.find(r => r.lines === regionLines)?.direction === 'v';
+                    const erase = (p, radius) => {
+                        procCtx.beginPath(); procCtx.arc(p[0] + offset.x, p[1] + offset.y, radius, 0, Math.PI * 2); procCtx.fill();
+                    };
+                    if (isV) {
+                        const r1 = Math.hypot(first[1][0] - first[0][0], first[1][1] - first[0][1]) / 2;
+                        if (!skipFirst) { erase(first[1], r1); erase(first[2], r1); }
+                        const r2 = Math.hypot(last[1][0] - last[0][0], last[1][1] - last[0][1]) / 2;
+                        erase(last[0], r2); erase(last[3], r2);
+                    } else {
+                        const r1 = Math.hypot(first[3][0] - first[0][0], first[3][1] - first[0][1]) / 2;
+                        if (!skipFirst) { erase(first[0], r1); erase(first[1], r1); }
+                        const r2 = Math.hypot(last[3][0] - last[0][0], last[3][1] - last[0][1]) / 2;
+                        erase(last[3], r2); erase(last[2], r2);
+                    }
+                    procCtx.restore();
+                };
+
+                item.regions.forEach(r => {
+                    if (!r.lines || r.lines.length === 0) return;
+                    const stats = analyzeLineEdges(analysisCtx, r.lines[0]);
+                    let fillColor = null;
+                    if ((stats.black / (stats.black + stats.white + stats.other)) > THRESHOLD) fillColor = "#000000";
+                    else if ((stats.white / (stats.black + stats.white + stats.other)) > THRESHOLD) fillColor = "#ffffff";
+
+                    if (fillColor) {
+                        const isV = r.direction === 'v';
+                        const firstLine = r.lines[0];
+                        const lineWidth = isV ? Math.hypot(firstLine[1][0] - firstLine[0][0], firstLine[1][1] - firstLine[0][1]) : Math.hypot(firstLine[3][0] - firstLine[0][0], firstLine[3][1] - firstLine[0][1]);
+                        
+                        // 计算 1/4 延伸探测区
+                        const extDist = lineWidth / 4;
+                        const extPoly = isV ? 
+                            [firstLine[1], [firstLine[1][0]+extDist, firstLine[1][1]], [firstLine[2][0]+extDist, firstLine[2][1]], firstLine[2]] : 
+                            [[firstLine[0][0], firstLine[0][1]-extDist], [firstLine[1][0], firstLine[1][1]-extDist], firstLine[1], firstLine[0]];
+                        
+                        const opposite = fillColor === "#ffffff" ? "black" : "white";
+                        // 核心条件：如果没有发现相反颜色，则首行跳过偏移绘制
+                        const skipFirstOffset = !hasOppositeColor(analysisCtx, extPoly, opposite);
+
+                        const offsetDist = lineWidth * 0.45;
+                        const offset = isV ? {x: offsetDist, y: 0} : {x: 0, y: -offsetDist};
+
+                        // 按照你的要求：先偏移绘制，后正位绘制
+                        drawAndClip(r.lines, fillColor, offset, skipFirstOffset);
+                        drawAndClip(r.lines, fillColor);
+                        pageChanged = true;
+                    }
+                });
+
+                if (pageChanged) {
+                    item.paint_raw = procCanvas.toDataURL();
+                    if (i === currentFileIndex) isCanvasDirty = true;
+                }
+            }
+            autoFillBtnRight.innerText = "完成";
+            setTimeout(() => { autoFillBtnRight.innerText = originalText; autoFillBtnRight.disabled = false; }, 1500);
+            loadFile(currentFileIndex);
+        };
+
+        /**
+        * 分析多边形边缘的像素分布
+        */
+        function analyzeLineEdges(ctx, points) {
+            const stats = { black: 0, white: 0, other: 0 };
+            const samples = 20; // 每条边采样点数
+
+            for (let i = 0; i < points.length; i++) {
+                const p1 = points[i];
+                const p2 = points[(i + 1) % points.length];
+                
+                for (let j = 0; j < samples; j++) {
+                    const x = p1[0] + (p2[0] - p1[0]) * (j / samples);
+                    const y = p1[1] + (p2[1] - p1[1]) * (j / samples);
+                    const pixel = ctx.getImageData(Math.round(x), Math.round(y), 1, 1).data;
+                    
+                    const r = pixel[0], g = pixel[1], b = pixel[2];
+                    if (r < 5 && g < 5 && b < 5) stats.black++;
+                    else if (r > 250 && g > 250 && b > 250) stats.white++;
+                    else stats.other++;
+                }
+            }
+            return stats;
+        }
+
+        /**
+        * 在画布上填充多边形
+        */
+        function fillPolygon(ctx, points, color) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(points[0][0], points[0][1]);
+            for (let i = 1; i < points.length; i++) {
+                ctx.lineTo(points[i][0], points[i][1]);
+            }
+            ctx.closePath();
+            ctx.fill();
+        }
+
+
+
+        // [新增] 追踪最后点击的输入框
+        transEditArea.addEventListener('focus', () => { lastActiveInputId = 'transEditArea'; });
+        origEditArea.addEventListener('focus', () => { lastActiveInputId = 'origEditArea'; });
+        /**
+         * 属性修改核心：优先处理多选列表，否则处理单选，最后处理全局
+         */
+        function batchUpdateProp(propName, value) {
+            if (selectedRegions.length > 0) {
+                // A. 批量修改模式
+                selectedRegions.forEach(idx => {
+                    if (regions[idx]) regions[idx][propName] = value;
+                });
+            } else if (activeRegionIndex !== -1) {
+                // B. 单选修改模式
+                regions[activeRegionIndex][propName] = value;
+            } else {
+                // C. 全局默认值修改模式 (视具体属性而定)
+                updateGlobalDefault(propName, value);
+            }
+            draw();
+        }
+
+        // 辅助：更新全局默认变量 (根据你的代码变量名)
+        function updateGlobalDefault(prop, val) {
+            if (prop === 'font_size') {} // 字号通常不设全局默认
+            else if (prop === 'fontFamily') activeFontFamily = val;
+            else if (prop === 'fontWeight') activeFontWeight = val;
+            else if (prop === 'line_spacing') activeLineSpacing = val;
+            else if (prop === 'letter_spacing') activeLetterSpacing = val;
+            else if (prop === 'parsedColor') activeTextColor = val;
+
+            // --- 补全以下缺失的全局映射 ---
+            else if (prop === 'strokeWidthRatio') activeStrokeWidth = val; // 对应描边粗细
+            else if (prop === 'strokeColor') activeStrokeColor = val;     // 对应描边颜色
+            else if (prop === 'strokeEnable') activeStrokeEnabled = val;   // 对应描边开关
+        }
+
 
         concurrencyInput.addEventListener('input', (e) => {
             let val = parseInt(e.target.value);
@@ -1276,7 +1481,36 @@
             }
             return modifiedCount;
         }
+        /**
+         * 替换当前选中的匹配项
+         */
+        function executeSingleReplace() {
+            if (searchResults.length === 0 || currentSearchIndex === -1) return;
 
+            const findStr = document.getElementById('findInput').value;
+            const replaceStr = document.getElementById('replaceInput').value;
+            const matchCase = document.getElementById('matchCase').checked;
+
+            const match = searchResults[currentSearchIndex];
+            const region = matchedFiles[match.fileIndex].regions[match.regionIndex];
+
+            const flags = matchCase ? 'g' : 'gi';
+            const regex = new RegExp(findStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
+
+            if (region.translation && regex.test(region.translation)) {
+                region.translation = region.translation.replace(regex, replaceStr);
+                // 如果是当前页，同步 UI
+                if (match.fileIndex === currentFileIndex) {
+                    regions[match.regionIndex].translation = region.translation;
+                    if (activeRegionIndex === match.regionIndex) {
+                        document.getElementById('transEditArea').value = region.translation.replace(/【BR】/g, '\n');
+                    }
+                    draw();
+                }
+                // 自动跳到下一个
+                if (searchResults.length > 1) navigateSearch(1);
+            }
+        }
 
         // 3. 绑定“一”按钮功能：替 + 自
         const batchProcessBtnRight = document.getElementById('batchProcessBtnRight');
@@ -1581,45 +1815,46 @@
 
 
         // 升级后的“属”按钮逻辑
+        // 升级后的“属”按钮逻辑：支持多选切换
         editPropBtnRight.onclick = () => {
-            // 场景 A：选中了单个框
-            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
-                const r = regions[activeRegionIndex];
+            // 1. 确定操作目标：优先多选列表，其次单选红框
+            let targetIndices = [];
+            if (selectedRegions.length > 0) {
+                targetIndices = [...selectedRegions];
+            } else if (activeRegionIndex !== -1) {
+                targetIndices = [activeRegionIndex];
+            }
 
-                // --- 核心修复：先进行“脱敏”处理，确保值是标准小写的 v 或 h ---
-                let currentDir = String(r.direction || 'v').toLowerCase();
-                
-                // 智能切换逻辑：只要包含 h 就是横排，否则就是竖排
-                if (currentDir.includes('h')) {
-                    // 当前是横排 -> 切换为竖排
-                    r.direction = 'v';
-                } else {
-                    // 当前是竖排 -> 切换为横排
-                    r.direction = 'h';
-                }
+            // 2. 如果有目标，执行批量切换
+            if (targetIndices.length > 0) {
+                targetIndices.forEach(idx => {
+                    const r = regions[idx];
+                    if (!r) return;
 
-                // --- UI 反馈：让按钮立即显示当前状态 ---
-                const dirText = (r.direction === 'v' ? "竖" : "横");
-                editPropBtnRight.innerText = dirText;
-                
-                // 增加颜色高亮，提示已修改
+                    // 智能切换：只要包含 h 就是横排 -> 变竖排；否则变横排
+                    let currentDir = String(r.direction || 'v').toLowerCase();
+                    r.direction = currentDir.includes('h') ? 'v' : 'h';
+                });
+
+                // UI 反馈：闪烁提示修改成功
+                const firstDir = regions[targetIndices[0]].direction;
+                editPropBtnRight.innerText = (firstDir === 'v' ? "竖" : "横");
                 editPropBtnRight.classList.add('text-blue-400', 'border-blue-400');
+                
                 setTimeout(() => {
-                    editPropBtnRight.innerText = "属"; // 800ms 后变回“属”字
+                    editPropBtnRight.innerText = "属";
                     editPropBtnRight.classList.remove('text-blue-400', 'border-blue-400');
                 }, 800);
 
-                console.log(`区域 #${activeRegionIndex + 1} 方向已切换为: ${dirText}`);
-                
-                draw(); // 立即重绘画布
+                draw(); // 立即重绘
             } 
-            // 场景 B：未选中 -> 弹出全局选择框
+            // 3. 既没多选也没单选，才弹出全局菜单
             else {
                 const dialog = document.getElementById('dirScopeDialog');
                 if (dialog) {
                     dialog.classList.remove('hidden');
                 } else {
-                    alert("请先选择一个文本框，或通过全局菜单操作。");
+                    alert("请先选择文本框，或通过全局菜单操作。");
                 }
             }
         };
@@ -1851,20 +2086,29 @@
         };
 
         // 专门用于插入纯文本符号的函数
+        // 升级后的插入函数
         window.insertText = function(str) {
-            const textarea = document.getElementById('transEditArea');
+            // 1. 获取当前有焦点的输入框对象
+            const textarea = document.getElementById(lastActiveInputId);
+            
+            // 2. 判定：如果是原文栏，且插入的是旋转标签 [rot=...]，则直接拦截
+            if (lastActiveInputId === 'origEditArea' && str.includes('[rot=')) {
+                console.log("原文栏禁止插入旋转标签");
+                return; 
+            }
+
             const start = textarea.selectionStart;
             const end = textarea.selectionEnd;
             const text = textarea.value;
 
-            // 在光标处插入符号（如果有选中内容则替换）
+            // 3. 在光标位置插入字符
             const replacement = str;
             textarea.value = text.substring(0, start) + replacement + text.substring(end);
 
-            // 【关键】手动触发 input 事件，让 Canvas 立即更新预览
+            // 4. 手动触发 input 事件，让 Canvas 立即更新预览（数据同步会自动通过 input 监听完成）
             textarea.dispatchEvent(new Event('input'));
 
-            // 将光标移到插入符号之后并恢复焦点
+            // 5. 恢复焦点并保持光标位置
             textarea.focus();
             const newPos = start + replacement.length;
             textarea.setSelectionRange(newPos, newPos);
@@ -1890,7 +2134,34 @@
 
         mainCanvas.addEventListener('mousedown', (e) => {
             // 使用你代码中原有的坐标转换函数
-            const pos = getMousePos(e); 
+            const pos = getMousePos(e); //
+
+            // --- 新增：右键多选总框逻辑 ---
+            // 只有在非涂鸦、非蒙版模式下，右键才用于选择
+            if (e.button === 2 && maskEditMode === 'none' && paintMode === 'none' && !comboMode) {
+                e.preventDefault(); // 禁止默认菜单
+                const hit = findRegionAt(pos);
+                
+                if (hit) {
+                    // 原有的：右键点中框，切换选中状态
+                    const idx = hit.regionIdx;
+                    const sIdx = selectedRegions.indexOf(idx);
+                    if (sIdx > -1) {
+                        selectedRegions.splice(sIdx, 1); 
+                    } else {
+                        selectedRegions.push(idx); 
+                        activeRegionIndex = idx; 
+                        setActiveRegion(idx);
+                    }
+                } else {
+                    // 【新增】：右键点击空白处，清空右键多选列表
+                    selectedRegions = [];
+                    console.log("右键多选已清空");
+                }
+                
+                draw();
+                return; // 右键逻辑处理完毕，直接返回，不触发后续的 onMouseDown
+            }
             
             if (e.altKey && e.button === 0) {
                 isAltSelecting = true;
@@ -2038,34 +2309,24 @@
             } else { 
                 customFontInput.classList.add('hidden'); 
                 
-                if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
-                    // 场景 A：选中了框，改单体
-                    regions[activeRegionIndex].fontFamily = val;
-                } else {
-                    // 场景 B：没选中框，更新全局默认值
-                    activeFontFamily = val; 
-                    console.log("全局默认字体已更新为:", val);
-                }
-                draw(); 
+                // 直接交给 batchUpdateProp，它会自动检查：
+                // 1. 是否有多选 (selectedRegions)？有就全改。
+                // 2. 没有多选，是否有单选 (activeRegionIndex)？有就改单体。
+                // 3. 都没有，才改全局 (activeFontFamily)。
+                batchUpdateProp('fontFamily', val);
             }
         });
 
         customFontInput.addEventListener('input', (e) => { 
             const val = `"${e.target.value}", sans-serif`;
             
-            // [修改] 同样逻辑应用于自定义字体输入
-            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
-                regions[activeRegionIndex].fontFamily = val;
-            } else {
-                activeFontFamily = val;
-            }
-            draw(); 
+            // 同样，直接调用批处理函数，不要自己写 if/else
+            batchUpdateProp('fontFamily', val);
         });
         
         textAlignSelect.addEventListener('change', (e) => {
-            const val = e.target.value;
-            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) { regions[activeRegionIndex].textAlign = val; draw(); } 
-            else { activeTextAlign = val; }
+            // 直接调用批量处理函数，它会自动判断是【单选】、【多选】还是【全局】
+            batchUpdateProp('textAlign', e.target.value);
         });
 
         btnForceAlign.addEventListener('click', () => {
@@ -2118,16 +2379,8 @@
         strokeWidthInput.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
             if (!isNaN(val) && val >= 0) {
-                if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
-                    // 场景A：选中了某个框 -> 只改当前这一个
-                    regions[activeRegionIndex].strokeWidthRatio = val;
-                } else {
-                    // 场景B：没选中框 -> 直接修改全局默认值 + 暴力修改页面上所有框
-                    activeStrokeWidth = val;
-                    regions.forEach(r => r.strokeWidthRatio = val);
-                }
-                // 无论哪种情况，都立即重绘
-                draw();
+                // 使用 batchUpdateProp 确保遵循：多选 > 单选 > 全局
+                batchUpdateProp('strokeWidthRatio', val);
             }
         });
 
@@ -2143,23 +2396,15 @@
 
         // 修改后的描边开关监听
         strokeEnableCb.addEventListener('change', (e) => {
-            const isChecked = e.target.checked;
-            
-            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
-                // 场景 A：选中了某个框 -> 只开关当前这一个
-                regions[activeRegionIndex].strokeEnable = isChecked;
-            } else {
-                // 场景 B：没选中框 -> 修改全局默认值，并同步给所有框
-                activeStrokeEnabled = isChecked;
-                regions.forEach(r => r.strokeEnable = isChecked);
-            }
-            draw();
+            // 调用批处理函数修改布尔值
+            batchUpdateProp('strokeEnable', e.target.checked);
         });
 
+        // 修改原本的 fontSizeInput 监听器
         fontSizeInput.addEventListener('input', (e) => { 
             const val = parseFloat(e.target.value); 
             if(!isNaN(val) && val > 0) { 
-                updateActiveRegionProp('font_size', val); 
+                batchUpdateProp('font_size', val); // 替换原来的 updateActiveRegionProp
             }
         });
 
@@ -2168,48 +2413,17 @@
         lineSpacingInput.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
             if (isNaN(val)) return;
-
-            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
-                // --- 场景 A：选中了框，只改这一个 ---
-                regions[activeRegionIndex].line_spacing = val;
-            } else {
-                // --- 场景 B：点击了空白（未选中），全书同步 ---
-                activeLineSpacing = val; // 建议在全局定义这个变量记录当前基准
-                
-                // 1. 修改当前页面显示的全部框
-                regions.forEach(r => {
-                    r.line_spacing = val;
-                });
-
-                // 2. 批量修改内存中全书所有页面的数据 (如果你在做长篇翻译)
-                if (matchedFiles && matchedFiles.length > 0) {
-                    matchedFiles.forEach(file => {
-                        file.regions.forEach(r => {
-                            r.line_spacing = val;
-                        });
-                    });
-                }
-            }
-            // 关键：无论选没选中，强制重绘画布
-            draw(); 
+            // 直接调用批处理函数，它会自动处理 多选 > 单选 > 全局
+            batchUpdateProp('line_spacing', val);
         });
 
         // 字间距监听器 (同步修改)
         letterSpacingInput.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
             if (isNaN(val)) return;
-
-            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
-                regions[activeRegionIndex].letter_spacing = val;
-            } else {
-                activeLetterSpacing = val; // 更新全局基准
-                regions.forEach(r => r.letter_spacing = val);
-                if (matchedFiles.length > 0) {
-                    matchedFiles.forEach(f => f.regions.forEach(r => r.letter_spacing = val));
-                }
-            }
-            draw();
+            batchUpdateProp('letter_spacing', val);
         });
+
         // 找到第 829 行附近的监听器绑定，改为如下带判断的写法：
         if (showBlocksCb) showBlocksCb.addEventListener('change', (e) => { showBlocks = e.target.checked; draw(); });
         if (showLinesCb) showLinesCb.addEventListener('change', (e) => { showLines = e.target.checked; draw(); });
@@ -2672,12 +2886,31 @@
                     viewState.startX = e.clientX; 
                     viewState.startY = e.clientY;
                     document.getElementById('canvasContainer').style.cursor = 'grabbing';
+                    // 空白处处理 ---
                     if (!hit) {
-                        resetSidebar(); 
-                        activeLineIndex = -1;
-                        selectedItems = [];
-                        isShiftMultiSelect = false;
-                        draw();
+                        if (e.button === 0) { 
+                            // 【左键点击空白】：取消左键相关的选中
+                            activeRegionIndex = -1;
+                            activeLineIndex = -1;
+                            selectedItems = [];
+                            isShiftMultiSelect = false;
+                            
+                            // 允许平移画布
+                            viewState.isPanning = true; 
+                            viewState.startX = e.clientX; 
+                            viewState.startY = e.clientY;
+                            document.getElementById('canvasContainer').style.cursor = 'grabbing';
+                            
+                            // 更新侧边栏状态（不影响右键多选数据）
+                            resetSidebar(); 
+                        } 
+                        else if (e.button === 2) { 
+                            // 【右键点击空白】：仅取消右键批量选择列表
+                            selectedRegions = []; 
+                        }
+                        
+                        draw(); // 立即刷新画布，让对应的框消失/变色
+                        return;
                     }
                     return;
                 }
@@ -2910,13 +3143,14 @@
         function setupNativePicker(picker, type) {
             picker.addEventListener('input', (e) => {
                 const color = e.target.value;
-                const isFill = type === 'fill';
+                const prop = type === 'fill' ? 'parsedColor' : 'strokeColor';
+                batchUpdateProp(prop, color); // 核心修改
                 
                 if (isFill) {
                     btnFillColor.style.backgroundColor = color;
                     // 处理应用对象
                     if (colorPickTargetIndex !== -1 && regions[colorPickTargetIndex]) {
-                        regions[colorPickTargetIndex].parsedColor = color;
+                        batchUpdateProp('parsedColor', color);
                         
                         // --- 【新增逻辑】如果是白色系，自动设置黑色描边 ---
                         if (isNearWhite(color)) {
@@ -2936,7 +3170,7 @@
                     // 描边颜色修改逻辑保持不变
                     btnStrokeColor.style.backgroundColor = color;
                     if (colorPickTargetIndex !== -1 && regions[colorPickTargetIndex]) {
-                        regions[colorPickTargetIndex].strokeColor = color;
+                        batchUpdateProp('strokeColor', color);
                     } else {
                         activeStrokeColor = color;
                     }
@@ -2972,15 +3206,7 @@
         
         fontWeightSelect.addEventListener('change', (e) => {
             const val = e.target.value;
-            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
-                // 场景A：选中单个框 -> 只改这个
-                regions[activeRegionIndex].fontWeight = val;
-            } else {
-                // 场景B：未选中 -> 改全局默认 + 暴力刷新所有框
-                activeFontWeight = val;
-                regions.forEach(r => r.fontWeight = val);
-            }
-            draw();
+            batchUpdateProp('fontWeight', e.target.value);
         });
 
 
@@ -3168,6 +3394,39 @@
             // 2. UI 装饰与交互层 (框线、手柄)
             regions.forEach((r, i) => {
                 const active = (i === activeRegionIndex);
+                const isMultiSelected = selectedRegions.includes(i); // 是否在多选列表中
+
+                if (r.box && showBlocks) {
+                    ctx.save();
+                    const [x1, y1, x2, y2] = r.box;
+                    const w = x2 - x1, h = y2 - y1;
+                    const cx = x1 + w/2, cy = y1 + h/2;
+                    ctx.translate(cx, cy);
+                    ctx.rotate(r.angle * Math.PI / 180);
+
+                    // 样式优先级：单选激活(红) > 多选选中(橙) > 普通(绿)
+                    // 1. 先判断并绘制“多选”的填充背景（这样它会出现在最底层）
+                    if (isMultiSelected) {
+                        ctx.fillStyle = 'rgba(245, 158, 11, 0.15)'; // 稍微加深一点点
+                        ctx.fillRect(-w/2, -h/2, w, h);
+                    }
+
+                    // 2. 再决定边框的颜色
+                    if (active) {
+                        ctx.strokeStyle = '#f59e0b'; // 激活项始终是红色边框
+                        ctx.lineWidth = 3;
+                    } else if (isMultiSelected) {
+                        ctx.strokeStyle = '#f59e0b'; // 多选项是非激活时的橙色边框
+                        ctx.lineWidth = 3;
+                    } else {
+                        ctx.strokeStyle = '#22c55e'; // 普通项绿色
+                        ctx.lineWidth = 1.5;
+                    }
+
+                    // 3. 最后统一画出边框
+                    ctx.strokeRect(-w/2, -h/2, w, h);
+                    ctx.restore();
+                }
 
                 // 1. 【核心恢复】计算当前活动区域的最值字号索引
                 let minSizeIdx = -1, maxSizeIdx = -1;
@@ -3449,22 +3708,37 @@
             ctx.restore();
         }
 
-        function drawAngleBox(region, isActive) {
-            const [x1, y1, x2, y2] = region.box; const w = x2 - x1, h = y2 - y1;
+        function drawAngleBox(region, isActive, isMultiSelected) {
+            const [x1, y1, x2, y2] = region.box; 
+            const w = x2 - x1, h = y2 - y1;
             const cx = x1 + w/2, cy = y1 + h/2;
-            ctx.save(); ctx.translate(cx, cy); ctx.rotate(region.angle * Math.PI / 180);
-            ctx.strokeStyle = isActive ? '#f59e0b' : '#22c55e'; // 顺便改成了你想要的橙色
-            ctx.lineWidth = isActive ? 2.5 : 1.5; 
-            ctx.strokeRect(-w/2, -h/2, w, h);
+            ctx.save(); 
+            ctx.translate(cx, cy); 
+            ctx.rotate(region.angle * Math.PI / 180);
 
-            // 【核心修复】：增加 displayMode !== 'original' 判断
-            // 只有在非原文模式（即译文模式）下，且被选中时，才显示大框的旋转连接线
+            // --- 核心样式逻辑 ---
+            if (isActive) {
+                ctx.strokeStyle = '#f59e0b'; // 激活项：红色
+                ctx.lineWidth = 3;
+            } else if (isMultiSelected) {
+                ctx.strokeStyle = '#f59e0b'; // 多选项：橙色
+                ctx.lineWidth = 3;
+                // 增加半透明填充，让多选更明显
+                ctx.fillStyle = 'rgba(245, 158, 11, 0.1)';
+                ctx.fillRect(-w/2, -h/2, w, h);
+            } else {
+                ctx.strokeStyle = '#22c55e'; // 普通：绿色
+                ctx.lineWidth = 1.5;
+            }
+
+            ctx.strokeRect(-w/2, -h/2, w, h);
+            
+            // 只有红色激活项显示旋转杆
             if (isActive && displayMode !== 'original') {
                 ctx.beginPath(); 
                 ctx.moveTo(0, -h/2); 
-                ctx.lineTo(0, -h/2 - ROTATE_HANDLE_OFFSET);
+                ctx.lineTo(0, -h/2 - 30);
                 ctx.strokeStyle = '#8b5cf6'; 
-                ctx.lineWidth = 2; 
                 ctx.stroke();
             }
             ctx.restore();
@@ -5122,6 +5396,9 @@ ctx.translate(0, Math.round(charY));
         async function loadFile(index) {
             if (index < 0 || index >= matchedFiles.length) return;
             
+            // --- 新增：切换页面时清空右键多选列表 ---
+            selectedRegions = [];
+
             // 1. 进入加载状态，锁定唯一加载 ID
             isPageLoading = true; 
             const myLoadId = ++currentLoadingId; 
@@ -6023,20 +6300,18 @@ ctx.translate(0, Math.round(charY));
             draw();
         }
         // --- [增强版] 支持多选的删除函数 ---
+        // 修改 deleteSelectedItems 函数
         window.deleteSelectedItems = function() {
-            // 1. 如果没有多选，则尝试删除当前活动的单条
-            if (selectedItems.length === 0) {
-                if (activeRegionIndex !== -1) {
-                    // 这里执行原本的单选删除逻辑
-                    const r = regions[activeRegionIndex];
-                    if (activeLineIndex !== -1) {
-                        r.lines.splice(activeLineIndex, 1);
-                        if (r.texts) r.texts.splice(activeLineIndex, 1);
-                        if (r.lines.length === 0) regions.splice(activeRegionIndex, 1);
-                        else initRegionBox(r);
-                    } else {
-                        regions.splice(activeRegionIndex, 1);
-                    }
+            if (selectedRegions.length > 0) {
+                // 批量删除选中的大框
+                if (confirm(`确定要删除选中的 ${selectedRegions.length} 个区域吗？`)) {
+                    // 必须从后往前删，防止索引偏移
+                    selectedRegions.sort((a, b) => b - a).forEach(idx => {
+                        regions.splice(idx, 1);
+                    });
+                    selectedRegions = [];
+                    activeRegionIndex = -1;
+                    resetSidebar(); //
                 }
             } else {
                 // 2. 多选删除逻辑：按 Region 分组处理
@@ -6323,7 +6598,9 @@ ctx.translate(0, Math.round(charY));
             letterSpacingInput.value = (r.letter_spacing || 0).toFixed(2);
             textAlignSelect.value = r.textAlign || activeTextAlign;
             fontWeightSelect.value = r.fontWeight || activeFontWeight;
-
+            // --- [新增] 同步填孔开关状态 ---
+            // 使用 !! 强制转为布尔值，防止 undefined 导致报错
+            fillHolesCb.checked = !!r.fill_holes;
             // 在 setActiveRegion(i) 函数末尾添加：
             document.getElementById('blurEnable').checked = !!r.blurEnable;
             // 将原来的数值作为倍率显示，比如 0.1 表示 10% 的字号
@@ -6339,6 +6616,7 @@ ctx.translate(0, Math.round(charY));
         // 修改原本的 onMouseDown 里的 else 分支
         function resetSidebar() {
             activeRegionIndex = -1;
+
             const container = document.getElementById('editorContainer');
             
             // --- 核心修改：不要使用 none，改用 auto 确保临时文本框可用 ---
@@ -6361,6 +6639,9 @@ ctx.translate(0, Math.round(charY));
             if (activeFontFamily !== 'custom') {
                 customFontInput.classList.add('hidden');
             }
+
+            // --- [新增] 取消选中时，填孔开关默认关掉 ---
+            fillHolesCb.checked = false;
             
             // --- 新增：重置“属”按钮状态 ---
             const propBtn = document.getElementById('editPropBtnRight');
@@ -6381,15 +6662,7 @@ ctx.translate(0, Math.round(charY));
         
         // 1. 监听下拉框改变 (单框修改)
         document.getElementById('punctAlignSelect').addEventListener('change', (e) => {
-            const val = e.target.value;
-            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
-                // 场景 A：选中了框，只改这一个
-                regions[activeRegionIndex].punctAlign = val;
-            } else {
-                // 场景 B：没选中框，更新全局默认值
-                activePunctAlign = val;
-            }
-            draw(); // 立即重绘画布查看效果
+            batchUpdateProp('punctAlign', e.target.value);
         });
 
 
@@ -6716,11 +6989,9 @@ ctx.translate(0, Math.round(charY));
 
         // 脚本末尾的监听器
         document.getElementById('blurSizeInput').addEventListener('input', (e) => {
-            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
-                // 存储为比例
-                regions[activeRegionIndex].blurSizeRatio = parseFloat(e.target.value) || 0;
-                draw();
-            }
+            const val = parseFloat(e.target.value) || 0;
+            // 同样，交给批处理函数
+            batchUpdateProp('blurSizeRatio', val);
         });
 
         // 译文即时重绘：处理换行标签
