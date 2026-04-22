@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v18.5.7.3)</title>
+    <title>MTU 嵌字编辑器 (v18.5.7.3.6)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -212,6 +212,14 @@
                         <span id="repairOpacityValue" class="text-[9px] text-gray-500 w-6">100%</span>
                     </div>
                 </div>
+                <div class="flex flex-col items-center ml-2 border-l border-gray-700 pl-2">
+                    <span class="text-[9px] text-gray-400">涂鸦层透明度</span>
+                    <div class="flex items-center gap-2">
+                        <input type="range" id="paintOpacityRange" min="0" max="1" step="0.01" value="1" 
+                            class="w-16 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-green-600">
+                        <span id="paintOpacityValue" class="text-[9px] text-gray-500 w-6">100%</span>
+                    </div>
+                </div>
             </div>
             <div class="w-px h-4 bg-gray-600"></div>
             <div class="flex bg-gray-700 rounded p-0.5">
@@ -396,10 +404,6 @@
                         <input type="number" id="strokeWidthInput" step="0.05" min="0" max="5" value="0.2" 
                             class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 w-14 h-6 text-center focus:border-blue-500 transition-colors outline-none" 
                             title="描边粗细 (0.2 = 20% 字号)">
-                        <label class="flex items-center cursor-pointer ml-1" title="圆角描边 (Round Join)">
-                            <input type="checkbox" id="strokeRound" checked class="h-3 w-3 accent-blue-600">
-                            <span class="text-[9px] text-gray-400 ml-0.5">圆</span>
-                        </label>
                         <!-- [新增] 填孔/强力描边开关 -->
                         <label class="flex items-center cursor-pointer ml-1" title="填孔 (多层叠加，解决空心问题，仅对选中框生效)">
                             <input type="checkbox" id="fillHolesCb" class="h-3 w-3 accent-red-500">
@@ -651,6 +655,10 @@
                     <button id="paintEraserBtn" class="rt-btn !hidden" title="涂鸦橡皮 (右键擦，中键画，快捷键: < 和 > 调节笔触大小)">🧹</button>
                     <button id="comboModeBtn" class="rt-btn text-purple-400 border-purple-500/30" title="混合模式：右键自由涂鸦，中键蒙版橡皮，快捷键: < 和 > 调节笔触大小">混</button>
                     <button id="autoFillBtnRight" class="rt-btn text-green-400 border-green-500/30" title="自动背景填充：检测行框边缘并填充纯黑/纯白">填</button>
+                    <label class="flex items-center cursor-pointer mb-1" title="开启后，自动填充会尝试覆盖气泡外的注音">
+                        <input type="checkbox" id="firstLineExpandCb" class="h-3 w-3 accent-green-500">
+                        <span class="text-[9px] text-gray-400 ml-1">填振</span>
+                    </label>
                 </div>
                 <div class="mt-auto mb-2 flex flex-col items-center gap-2">
                     <div class="w-8 h-px bg-gray-700 mx-auto mb-1"></div>
@@ -769,6 +777,8 @@
         // [新增] 记录最后获得焦点的输入框 ID，默认为译文栏
         let lastActiveInputId = 'transEditArea';
 
+        let enableFirstLineExpand = false; // 默认开启扩张逻辑
+        let paintOpacity = 1.0; // 默认不透明
 
 
         const uiCanvas = document.getElementById('uiCanvas');
@@ -908,7 +918,30 @@
         // --- 自动背景填充功能实现 ---
         // --- 自动背景填充功能（带 80% 阈值检测） ---
         const autoFillBtnRight = document.getElementById('autoFillBtnRight');
+        const paintOpacityRange = document.getElementById('paintOpacityRange');
+        const paintOpacityValue = document.getElementById('paintOpacityValue');
 
+
+
+
+
+
+
+        if (paintOpacityRange) {
+            paintOpacityRange.addEventListener('input', (e) => {
+                paintOpacity = parseFloat(e.target.value); //
+                if (paintOpacityValue) {
+                    paintOpacityValue.textContent = Math.round(paintOpacity * 100) + '%';
+                }
+                draw(); // 触发重绘
+            });
+        }
+
+
+        // 绑定监听器
+        document.getElementById('firstLineExpandCb').addEventListener('change', (e) => {
+            enableFirstLineExpand = e.target.checked;
+        });
         autoFillBtnRight.onclick = async () => {
             if (matchedFiles.length === 0) return alert("请先批量导入项目文件夹！");
             const originalText = autoFillBtnRight.innerText;
@@ -1005,7 +1038,15 @@
                         
                         const opposite = fillColor === "#ffffff" ? "black" : "white";
                         // 核心条件：如果没有发现相反颜色，则首行跳过偏移绘制
-                        const skipFirstOffset = !hasOppositeColor(analysisCtx, extPoly, opposite);
+                        // --- 修改前 ---
+                        // const skipFirstOffset = !hasOppositeColor(analysisCtx, extPoly, opposite);
+
+                        // --- 修改后 ---
+                        // 如果手动关闭了扩张，则强制跳过偏移绘制 (skipFirstOffset = true)
+                        // 如果开启了扩张，则走原有的自动探测逻辑
+                        const skipFirstOffset = enableFirstLineExpand 
+                            ? !hasOppositeColor(analysisCtx, extPoly, opposite) 
+                            : true;
 
                         const offsetDist = lineWidth * 0.45;
                         const offset = isV ? {x: offsetDist, y: 0} : {x: 0, y: -offsetDist};
@@ -1103,6 +1144,13 @@
             else if (prop === 'strokeWidthRatio') activeStrokeWidth = val; // 对应描边粗细
             else if (prop === 'strokeColor') activeStrokeColor = val;     // 对应描边颜色
             else if (prop === 'strokeEnable') activeStrokeEnabled = val;   // 对应描边开关
+            // --- 新增：如果是间距或颜色等全局属性，且当前未选中任何框时，同步更新所有现有框 ---
+            if (activeRegionIndex === -1 && selectedRegions.length === 0) {
+                regions.forEach(r => {
+                    // 如果框内还没有该属性，或者你想强制全局同步
+                    r[prop] = val; 
+                });
+            }
         }
 
 
@@ -2384,7 +2432,7 @@
             }
         });
 
-        document.getElementById('strokeRound').addEventListener('change', draw);
+
         
         // [新增] 填孔开关事件
         fillHolesCb.addEventListener('change', (e) => {
@@ -3144,6 +3192,8 @@
             picker.addEventListener('input', (e) => {
                 const color = e.target.value;
                 const prop = type === 'fill' ? 'parsedColor' : 'strokeColor';
+                // 核心修复：定义 isFill 变量
+                const isFill = (type === 'fill');
                 batchUpdateProp(prop, color); // 核心修改
                 
                 if (isFill) {
@@ -3374,7 +3424,10 @@
 
             // 4. 绘制涂鸦层 (Paint Layer)
             if (paintCanvas.width > 0) {
+                ctx.save(); // 保存当前状态
+                ctx.globalAlpha = paintOpacity; // 设置涂鸦层透明度
                 ctx.drawImage(paintCanvas, 0, 0);
+                ctx.restore(); // 恢复状态，确保不影响后续的文字层绘制
             }
 
             // --- 【新增：文字层控制】 ---
@@ -3827,10 +3880,11 @@
             const baseFontSize = region.font_size || 20;
 
             // 【修改】将 letter_spacing 视为倍率，计算出实际像素间距
-            const letterSpacingMult = region.letter_spacing || 0; 
+            // 优先使用单框属性，如果没有则使用全局变量
+            const letterSpacingMult = (region.letter_spacing !== undefined) ? region.letter_spacing : activeLetterSpacing; 
             const letterSpacingPx = baseFontSize * letterSpacingMult; 
 
-            const lineSpacingMult = region.line_spacing; 
+            const lineSpacingMult = (region.line_spacing !== undefined) ? region.line_spacing : activeLineSpacing;
             // ... 后续逻辑中使用 letterSpacingPx 的地方无需变动，因为它已经是计算后的像素值了
             const effectiveAlign = region.textAlign || activeTextAlign;
             const effectiveFont = region.fontFamily || activeFontFamily;
@@ -4183,10 +4237,10 @@
                 targetCtx.save();
 
 
-                // 1. 设置连接形状（圆角/尖角）
-                const isRound = document.getElementById('strokeRound').checked;
-                targetCtx.lineJoin = isRound ? 'round' : 'miter';
-                targetCtx.lineCap = isRound ? 'round' : 'butt';
+                // 1. 设置连接形状
+
+                targetCtx.lineJoin = 'round';
+                targetCtx.lineCap = 'round';
                 // 【性能修复】：将 filter 从字符循环中提取到 Pass 级别
                 // 整个 Pass 只设置一次滤镜，画完所有字符再关掉
                 if (isGlow) {
@@ -4225,6 +4279,9 @@
                     else if (isStroke) {
                         targetCtx.save();
                         targetCtx.filter = 'none';
+
+                        targetCtx.lineJoin =  'round'; 
+                        targetCtx.lineCap = 'round';
                         targetCtx.strokeStyle = finalStrokeColor;
                         
                         if (useConcentricFill) {
@@ -5952,6 +6009,7 @@ ctx.translate(0, Math.round(charY));
             // 显式确保这两个是开启的（即便 resetSidebar 没处理好，这里也能保底）
             lineSpacingInput.disabled = false; 
             letterSpacingInput.disabled = false;
+            strokeWidthInput.disabled = false;
         }
         function scrollToSidebar(i) { const item = document.getElementById(`sb-${i}`); if(item) item.scrollIntoView({behavior:'smooth', block:'center'}); }
         function getMousePos(e) { 
@@ -6598,6 +6656,7 @@ ctx.translate(0, Math.round(charY));
             letterSpacingInput.value = (r.letter_spacing || 0).toFixed(2);
             textAlignSelect.value = r.textAlign || activeTextAlign;
             fontWeightSelect.value = r.fontWeight || activeFontWeight;
+
             // --- [新增] 同步填孔开关状态 ---
             // 使用 !! 强制转为布尔值，防止 undefined 导致报错
             fillHolesCb.checked = !!r.fill_holes;
@@ -6654,7 +6713,9 @@ ctx.translate(0, Math.round(charY));
             // 填入当前的全局基准值
             lineSpacingInput.value = activeLineSpacing.toFixed(2);
             letterSpacingInput.value = activeLetterSpacing.toFixed(2);
-
+            // --- 新增：还原对齐方式和字重的 UI 显示 ---
+            textAlignSelect.value = activeTextAlign;   // 还原为全局对齐方式
+            fontWeightSelect.value = activeFontWeight; // 还原为全局默认字重
             // 调用你刚才改好的那个函数
             disableControls(); 
             updateColorSwatches();
