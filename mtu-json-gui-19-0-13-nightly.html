@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v18.5.7.3.6)</title>
+    <title>MTU 嵌字编辑器 (v19.0.13)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -98,6 +98,22 @@
         .rt-btn.mask-active:hover {
             background-color: #f87171 !important; /* 亮红色 bg-red-400 */
             transform: scale(1.1);
+        }
+
+        #comparisonRawImg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            max-width: none !important; /* 防止被父容器强制缩小 */
+            max-height: none !important;
+            transform-origin: 0 0;
+            image-rendering: pixelated; /* 保持像素级清晰 */
+        }
+
+        /* 确保分屏容器隐藏溢出 */
+        #leftCompare, #rightCompare {
+            overflow: hidden;
+            position: relative;
         }
     </style>
 </head>
@@ -225,6 +241,7 @@
             <div class="flex bg-gray-700 rounded p-0.5">
                 <button id="btnTrans" class="px-2 py-0.5 text-xs rounded bg-blue-600 text-white">译</button>
                 <button id="btnOriginal" class="px-2 py-0.5 text-xs rounded text-gray-300">原</button>
+                <button id="btnCompare" class="px-2 py-0.5 text-xs rounded text-gray-300">对</button>
             </div>
         </div>
         
@@ -540,7 +557,15 @@
             </div>
 
         </div>
-        <div class="flex-grow overflow-auto relative p-8" id="canvasContainer">
+        <div class="flex-grow overflow-hidden relative" id="canvasContainer">
+            <div id="comparisonWrapper" class="flex w-full h-full hidden">
+                <div id="leftCompare" class="w-1/2 h-full relative border-r border-gray-700 overflow-hidden bg-gray-900">
+                    </div>
+                <div id="rightCompare" class="w-1/2 h-full relative overflow-hidden bg-gray-900">
+                    <img id="comparisonRawImg" src="" class="absolute top-0 left-0 pointer-events-none" style="transform-origin: 0 0; image-rendering: pixelated;">
+                </div>
+            </div>
+            
             <canvas id="mainCanvas"></canvas>
             <canvas id="uiCanvas" class="absolute top-0 left-0 pointer-events-none z-20"></canvas>
         </div>
@@ -780,8 +805,11 @@
         let enableFirstLineExpand = false; // 默认开启扩张逻辑
         let paintOpacity = 1.0; // 默认不透明
 
-
+        // --- 在脚本顶部的变量定义区 ---
+        const mainCanvas = document.getElementById('mainCanvas');
         const uiCanvas = document.getElementById('uiCanvas');
+        const canvasContainer = document.getElementById('canvasContainer'); // 确保这一行存在
+        const container = canvasContainer; // 别名，方便后续使用
         const uiCtx = uiCanvas.getContext('2d');
 
 
@@ -791,7 +819,12 @@
         const maskCanvas = document.createElement('canvas');
         const maskCtx = maskCanvas.getContext('2d');
 
-
+        // 在变量初始化区域添加
+        const btnCompare = document.getElementById('btnCompare');
+        const comparisonWrapper = document.getElementById('comparisonWrapper');
+        const comparisonRawImg = document.getElementById('comparisonRawImg');
+        const leftCompare = document.getElementById('leftCompare');
+        const rightCompare = document.getElementById('rightCompare');
 
 
         // --- 2. 获取 DOM 元素 (统一放在这里，解决初始化顺序问题) ---
@@ -806,7 +839,6 @@
         const showBlocksCb = document.getElementById('showBlocksCb');
         const showLinesCb = document.getElementById('showLinesCb');
         const showTextCb = document.getElementById('showTextCb');
-        const mainCanvas = document.getElementById('mainCanvas');
         // --- 修改前 ---
         // let ctx = mainCanvas.getContext('2d');
 
@@ -925,7 +957,26 @@
 
 
 
+        /**
+         * 将当前画布上的涂鸦和蒙版数据持久化到内存数组中
+         * 防止因为 resizeCanvas() 导致的像素丢失
+         */
+        function persistCanvasData() {
+            if (currentFileIndex === -1 || !matchedFiles[currentFileIndex]) return;
 
+            // 如果画布是“脏”的（有改动），则保存快照
+            if (isCanvasDirty) {
+                console.log("检测到模式切换，正在保存涂鸦与蒙版快照...");
+                matchedFiles[currentFileIndex].paint_raw = paintCanvas.toDataURL();
+                
+                // 同步蒙版数据
+                const maskData = maskCanvas.toDataURL('image/png').split(',')[1];
+                matchedFiles[currentFileIndex].mask_raw = maskData;
+                
+                // 重置脏标记，防止重复执行昂贵的 toDataURL 操作
+                isCanvasDirty = false;
+            }
+        }
 
         if (paintOpacityRange) {
             paintOpacityRange.addEventListener('input', (e) => {
@@ -1634,28 +1685,80 @@
 
 
         // 2. 绑定切换逻辑 (建议放在这里)
+        // --- 修改 “译” 按钮 ---
         if (btnTrans) {
             btnTrans.onclick = () => { 
+                persistCanvasData(); // 【新增】保存当前涂鸦
                 displayMode = 'translation'; 
                 toggleModeBtns(); 
+                setupComparisonLayout(); 
                 draw(); 
             };
         }
 
+        // --- 修改 “原” 按钮 ---
         if (btnOriginal) {
             btnOriginal.onclick = () => { 
+                persistCanvasData(); // 【新增】保存当前涂鸦
                 displayMode = 'original'; 
                 toggleModeBtns(); 
+                setupComparisonLayout(); 
                 draw(); 
             };
         }
 
-
+        // --- 修改 “对” 按钮 ---
+        if (btnCompare) {
+            btnCompare.onclick = () => {
+                persistCanvasData(); // 【新增】保存当前涂鸦
+                displayMode = 'comparison';
+                toggleModeBtns();
+                setupComparisonLayout();
+                draw();
+            };
+        }
         // 3. 样式切换辅助函数 (可以放在 draw 函数附近或脚本末尾)
         function toggleModeBtns() {
-            if (!btnTrans || !btnOriginal) return;
-            btnTrans.className = `px-2 py-0.5 text-xs rounded ${displayMode === 'translation' ? 'bg-blue-600 text-white' : 'text-gray-300'}`;
-            btnOriginal.className = `px-2 py-0.5 text-xs rounded ${displayMode === 'original' ? 'bg-blue-600 text-white' : 'text-gray-300'}`;
+            if (!btnTrans || !btnOriginal || !btnCompare) return;
+            const activeClass = 'bg-blue-600 text-white';
+            const inactiveClass = 'text-gray-300';
+            
+            btnTrans.className = `px-2 py-0.5 text-xs rounded ${displayMode === 'translation' ? activeClass : inactiveClass}`;
+            btnOriginal.className = `px-2 py-0.5 text-xs rounded ${displayMode === 'original' ? activeClass : inactiveClass}`;
+            btnCompare.className = `px-2 py-0.5 text-xs rounded ${displayMode === 'comparison' ? activeClass : inactiveClass}`;
+        }
+
+        // 布局处理函数
+        function setupComparisonLayout() {
+            const mainContainer = document.getElementById('canvasContainer');
+            const uiCanvas = document.getElementById('uiCanvas');
+            
+            if (displayMode === 'comparison') {
+                // 1. 显示对比包装盒
+                comparisonWrapper.classList.remove('hidden');
+                
+                // 2. 将 绘图层 和 UI层 同时移入左侧分屏
+                leftCompare.appendChild(mainCanvas);
+                leftCompare.appendChild(uiCanvas); 
+                
+                // 3. 加载右侧原图
+                if (currentImage) {
+                    comparisonRawImg.src = currentImage.src;
+                }
+            } else {
+                // 1. 隐藏对比包装盒
+                comparisonWrapper.classList.add('hidden');
+                
+                // 2. 将 绘图层 和 UI层 移回主容器
+                mainContainer.appendChild(mainCanvas);
+                mainContainer.appendChild(uiCanvas);
+                
+                // 3. 清理右侧图源（释放内存）
+                comparisonRawImg.src = "";
+            }
+            
+            // 切换后立即重算缩放和偏移
+            resizeCanvas(); 
         }
 
         // 1. 临时实时保存
@@ -2180,7 +2283,8 @@
         // 禁止画布上的右键默认菜单
         mainCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-        mainCanvas.addEventListener('mousedown', (e) => {
+        // 改为监听父容器
+        container.addEventListener('mousedown', (e) => {
             // 使用你代码中原有的坐标转换函数
             const pos = getMousePos(e); //
 
@@ -2223,7 +2327,8 @@
         });
 
         // 修改后的 mainCanvas 鼠标移动监听
-        mainCanvas.addEventListener('mousemove', (e) => {
+        container.addEventListener('mousemove', (e) => {
+            // 这里的 renderUI 会让笔刷圆圈跟随鼠标到右侧区域
             // 1. 始终渲染 UI 圆圈（笔刷预览）
             renderUI(e);
 
@@ -2278,38 +2383,44 @@
         });
 
         window.addEventListener('mouseup', (e) => {
+            // 1. 记录重要状态
+            const wasPanning = viewState.isPanning;
 
+            // 2. 强制重置所有拖拽和清理状态（不要放在 if 里面，防止粘手）
+            transformState.dragging = false;
+            transformState.action = null;
+            viewState.isPanning = false;
+
+            // 3. 处理蒙版/涂鸦结束
             if (isMaskDragging) {
                 isMaskDragging = false;
                 currentMaskOp = 'none';
-                comboActiveTool = 'none'; // [新增] 重置混合工具标记
+                comboActiveTool = 'none';
                 syncMaskData(); 
                 draw();
-                return;
+                // 去掉这里的 return
             }
             
-            if (viewState.isPanning) {
-                viewState.isPanning = false;
+            // 4. 更新光标样式
+            if (wasPanning) {
                 document.getElementById('canvasContainer').style.cursor = (maskEditMode !== 'none') ? 'crosshair' : 'grab';
-                return;
             }
-            
+
+            // 5. 处理选择或普通松开
             if (isAltSelecting) {
                 isAltSelecting = false;
-                // 划线结束，开启 Shift 模式标记以维持高亮显示
                 isShiftMultiSelect = true; 
                 altSelectionPath = []; 
                 draw();
             } else {
-                onMouseUp(e);
+                // 调用底部的核心处理函数（确保执行保存和重绘）
+                onMouseUp(e); 
             }
         });
-
 
         
         window.addEventListener('resize', resizeCanvas);
         // 绑定滚轮缩放 (绑定到容器上，而不是 Canvas 上，体验更好)
-        const container = document.getElementById('canvasContainer');
         container.addEventListener('wheel', (e) => {
             e.preventDefault(); // 阻止浏览器默认滚动
 
@@ -2317,8 +2428,19 @@
             const rect = container.getBoundingClientRect();
             
             // 鼠标相对于容器的位置
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
+            // --- 核心修正：处理对比模式下的坐标折叠 ---
+            let mouseX = e.clientX - rect.left;
+            let mouseY = e.clientY - rect.top;
+
+            if (displayMode === 'comparison') {
+                // 如果在右半屏，将其 X 坐标映射回 0 ~ 50% 范围内
+                // 这样无论鼠标在哪一侧，计算出的缩放中心对图片来说都是同一个点
+                const halfWidth = rect.width / 2;
+                if (mouseX > halfWidth) {
+                    mouseX -= halfWidth;
+                }
+            }
+            // ---------------------------------------
 
             // 计算缩放前的鼠标在画布上的位置
             const wheel = e.deltaY < 0 ? 1 : -1;
@@ -2345,7 +2467,15 @@
 
         // 辅助函数：应用 CSS 变换
         function updateCanvasTransform() {
-            mainCanvas.style.transform = `translate(${viewState.x}px, ${viewState.y}px) scale(${viewState.scale})`;
+            const transformStr = `translate(${viewState.x}px, ${viewState.y}px) scale(${viewState.scale})`;
+            
+            // 同步左侧 Canvas
+            mainCanvas.style.transform = transformStr;
+            
+            // 关键：同步右侧原图 img
+            if (displayMode === 'comparison' && comparisonRawImg) {
+                comparisonRawImg.style.transform = transformStr;
+            }
         }
 
         fontSelect.addEventListener('change', (e) => {
@@ -2758,6 +2888,16 @@
 
         function onMouseDown(e) {
             const pos = getMousePos(e); 
+
+            // --- 1. 空格键优先级最高：强制进入平移模式 ---
+            if (e.button === 0 && isSpacePressed) {
+                viewState.isPanning = true; 
+                viewState.startX = e.clientX; 
+                viewState.startY = e.clientY;
+                document.getElementById('canvasContainer').style.cursor = 'grabbing';
+                return; // 只要按了空格，不执行选框或涂抹
+            }
+
             // --- [新增] 混合模式按下逻辑 ---
             if (comboMode && (e.button === 2 || e.button === 1)) {
                 isMaskDragging = true;
@@ -2816,7 +2956,7 @@
                 const region = regions[activeRegionIndex]; // 必须先定义 region
                 
                 // 【译文模式手柄检测】
-                if (displayMode === 'translation') {
+                if (displayMode === 'translation' || displayMode === 'comparison') { // 加上对比模式
                     const handles = getRegionHandles(region);
                     for(let h of handles) {
                         const hitThreshold = 20 / viewState.scale; // 统一 20px 判定区
@@ -2914,8 +3054,8 @@
                         transformState.action = 'move-line'; 
                         transformState.lineIndex = hit.lineIdx;
                         transformState.originalPoints = JSON.parse(JSON.stringify(regions[hit.regionIdx].lines[hit.lineIdx]));
-                    } else if (displayMode === 'translation') {
-                        // “译文模式”下，点中任何地方都移动大框
+                    } else if (displayMode === 'translation' || displayMode === 'comparison') {
+                        // “译文模式”下，点中任何地方都移动大框// --- 修改后：允许对比模式下也触发大框移动 ---
                         transformState.action = 'move-region'; 
                         transformState.startBox = [...regions[hit.regionIdx].box];
                     } else {
@@ -2969,14 +3109,11 @@
             const pos = getMousePos(e);
             let cursor = 'default';
 
+            // 1. 如果正在涂抹（右键/中键已按下），保持拦截
             if (isMaskDragging) {
                 if (comboMode) {
-                    // 混合模式：根据按下时确定的工具（comboActiveTool）执行唯一操作
-                    if (comboActiveTool === 'paint') {
-                        handlePaint(pos, 'brush');
-                    } else if (comboActiveTool === 'mask') {
-                        handleMaskPaint(pos, 'eraser');
-                    }
+                    if (comboActiveTool === 'paint') handlePaint(pos, 'brush');
+                    else if (comboActiveTool === 'mask') handleMaskPaint(pos, 'eraser');
                 } else if (paintMode !== 'none') {
                     handlePaint(pos, currentMaskOp);
                 } else if (maskEditMode !== 'none') {
@@ -2985,12 +3122,14 @@
                 return; 
             }
 
-            // 在 1667 行左右，如果是混合模式，也需要记录鼠标位置并渲染 UI 圆圈
-            if (maskEditMode !== 'none' || paintMode !== 'none' || comboMode) {
+            // 如果是混合模式，也需要记录鼠标位置并渲染 UI 圆圈
+            // --- 【核心修改点】 ---
+            // 只有在“既没在拖框”又“没在平移”的情况下，才显示笔刷 UI 并拦截后续逻辑
+            if ((maskEditMode !== 'none' || paintMode !== 'none' || comboMode) && !transformState.dragging) {
                 mainCanvas.style.cursor = 'crosshair';
                 currentMousePos = pos; 
                 renderUI(); 
-                return; 
+                return; // 只有不拖拽时才拦截，这样下方的 transformState.dragging 逻辑就能跑到了
             }
 
             if (isDrawingMode && drawStartPos) {
@@ -2999,11 +3138,16 @@
                 draw(); return;
             }
 
+            // 2. 如果正在平移画布（Space+左键），执行平移并拦截
             if (viewState.isPanning) {
-                const dx = e.clientX - viewState.startX; const dy = e.clientY - viewState.startY;
-                viewState.x += dx; viewState.y += dy;
-                viewState.startX = e.clientX; viewState.startY = e.clientY;
-                updateCanvasTransform(); return;
+                const dx = e.clientX - viewState.startX; 
+                const dy = e.clientY - viewState.startY;
+                viewState.x += dx; 
+                viewState.y += dy;
+                viewState.startX = e.clientX; 
+                viewState.startY = e.clientY;
+                updateCanvasTransform(); 
+                return;
             }
 
             if (transformState.dragging && activeRegionIndex !== -1) {
@@ -3143,8 +3287,8 @@
         
         // 1. 点击自定义方块 -> 触发原生选择器
         btnFillColor.addEventListener('click', () => {
-            // [关键修改] 打开前，先记下当前选中的是谁（或者是 -1）
-            colorPickTargetIndex = activeRegionIndex; 
+            // 【修改】优先判断是否有右键多选，若有则设为 -2，否则跟随 activeRegionIndex
+            colorPickTargetIndex = (selectedRegions.length > 0) ? -2 : activeRegionIndex;
 
             // 设置初始值
             let currentColor = (colorPickTargetIndex !== -1 && regions[colorPickTargetIndex]) ? 
@@ -3155,7 +3299,7 @@
 
         btnStrokeColor.addEventListener('click', () => {
             // [关键修改] 同样记下目标
-            colorPickTargetIndex = activeRegionIndex;
+            colorPickTargetIndex = (selectedRegions.length > 0) ? -2 : activeRegionIndex;
 
             let currentColor = (colorPickTargetIndex !== -1 && regions[colorPickTargetIndex]) ? 
                 colorToHex(regions[colorPickTargetIndex].strokeColor || activeStrokeColor) : activeStrokeColor;
@@ -3167,7 +3311,7 @@
 
         // 点击预览方块触发选择器
         btnBlurColor.addEventListener('click', () => {
-            colorPickTargetIndex = activeRegionIndex; // 记录当前操作的框
+            colorPickTargetIndex = (selectedRegions.length > 0) ? -2 : activeRegionIndex; // 记录当前操作的框
             let currentColor = (colorPickTargetIndex !== -1 && regions[colorPickTargetIndex]) ? 
                 (regions[colorPickTargetIndex].blurColor || "#000000") : "#000000";
             nativeBlurPicker.value = colorToHex(currentColor);
@@ -3178,9 +3322,8 @@
         nativeBlurPicker.addEventListener('input', (e) => {
             const color = e.target.value;
             btnBlurColor.style.backgroundColor = color;
-            if (colorPickTargetIndex !== -1 && regions[colorPickTargetIndex]) {
-                regions[colorPickTargetIndex].blurColor = color;
-            }
+            // 直接调用批处理函数，它会自动识别 selectedRegions 或 activeRegionIndex
+            batchUpdateProp('blurColor', color);
             draw();
         });
 
@@ -3192,23 +3335,34 @@
             picker.addEventListener('input', (e) => {
                 const color = e.target.value;
                 const prop = type === 'fill' ? 'parsedColor' : 'strokeColor';
-                // 核心修复：定义 isFill 变量
                 const isFill = (type === 'fill');
-                batchUpdateProp(prop, color); // 核心修改
+                
+                // 核心批处理函数已经能处理多选和单选
+                batchUpdateProp(prop, color); 
                 
                 if (isFill) {
                     btnFillColor.style.backgroundColor = color;
-                    // 处理应用对象
-                    if (colorPickTargetIndex !== -1 && regions[colorPickTargetIndex]) {
-                        batchUpdateProp('parsedColor', color);
-                        
-                        // --- 【新增逻辑】如果是白色系，自动设置黑色描边 ---
+                    // 【修改】只要不是全局模式 (即单选或多选)
+                    if (colorPickTargetIndex !== -1) {
+                        // 如果是白色系，执行自动黑边逻辑
                         if (isNearWhite(color)) {
-                            regions[colorPickTargetIndex].strokeColor = "#000000"; // 设为黑色
-                            strokeEnableCb.checked = true; // 自动勾选开启描边
+                            if (colorPickTargetIndex === -2) {
+                                // 针对多选列表批量设置
+                                selectedRegions.forEach(idx => {
+                                    if (regions[idx]) {
+                                        regions[idx].strokeColor = "#000000";
+                                        regions[idx].strokeEnable = true;
+                                    }
+                                });
+                            } else if (regions[colorPickTargetIndex]) {
+                                // 针对单选设置
+                                regions[colorPickTargetIndex].strokeColor = "#000000";
+                                strokeEnableCb.checked = true;
+                            }
                             btnStrokeColor.style.backgroundColor = "#000000";
                         }
                     } else {
+                        // 全局模式
                         activeTextColor = color;
                         if (isNearWhite(color)) {
                             activeStrokeColor = "#000000";
@@ -3217,38 +3371,23 @@
                         }
                     }
                 } else {
-                    // 描边颜色修改逻辑保持不变
                     btnStrokeColor.style.backgroundColor = color;
-                    if (colorPickTargetIndex !== -1 && regions[colorPickTargetIndex]) {
-                        batchUpdateProp('strokeColor', color);
-                    } else {
-                        activeStrokeColor = color;
-                    }
+                    if (colorPickTargetIndex === -1) activeStrokeColor = color;
                 }
                 draw();
             });
 
-
-            // [阶段B] 最终确认 (change事件)
             picker.addEventListener('change', (e) => {
                 const color = e.target.value;
-                
-                // [关键修改] 只有当“打开取色器时就没有选中任何框”的情况，才问是否应用全局
-                // 如果打开时选中了框，哪怕现在取消选中了，也不会弹窗，这符合用户直觉
+                // 因为多选时 index 为 -2，不等于 -1，所以这里不会再弹出全局确认框
                 if (colorPickTargetIndex === -1) {
                     pendingGlobalValue = color;
                     pendingGlobalType = type; 
-                    
                     const typeName = type === 'fill' ? '填充颜色' : '描边颜色';
                     confirmMessage.innerHTML = `您已修改默认${typeName}。<br>是否将此颜色应用到当前页面的<b class="text-yellow-400">所有</b>文本框？`;
                     confirmModal.style.display = 'flex';
                 }
-                
-                // [新增] 只有在针对单个框修改结束时，为了防止颜色没同步（因为input事件可能没覆盖最后一下），保险起见再画一次
-                // 并且如果用户是在改单个框，结束后就不需要重置 activeRegionIndex，保持原样即可
-                if (colorPickTargetIndex !== -1) {
-                    draw();
-                }
+                if (colorPickTargetIndex !== -1) draw();
             });
         }
 
@@ -3367,7 +3506,7 @@
             // 2. 中层：渲染修复图
             // --- 修改后的 draw() 函数内部关于修复图的部分 ---
 
-            if (displayMode === 'translation' && currentRepairImage) {
+            if ((displayMode === 'translation' || displayMode === 'comparison') && paintCanvas.width > 0) {
                 ctx.save();
                 ctx.globalAlpha = repairOpacity; 
 
@@ -3432,8 +3571,10 @@
 
             // --- 【新增：文字层控制】 ---
             // 只有在开启“字”开关时，才渲染复杂的译文或原文文本
+            // --- 找到这一行并修改 ---
             if (showText) {
-                if(displayMode === 'translation') {
+                // 修改：让对比模式也执行译文渲染逻辑
+                if(displayMode === 'translation' || displayMode === 'comparison') {
                     // 严格按汉堡包顺序绘制：底层发光 -> 中层描边 -> 顶层填充
                     regions.forEach(r => drawSmartTranslation(r, 'glow'));   
                     regions.forEach(r => drawSmartTranslation(r, 'stroke'));
@@ -3648,7 +3789,9 @@
                     }
                     
                     // 原文模式显示小框手柄
-                    if (displayMode !== 'translation' && r.lines) {
+                    // --- 修改后：明确在译文和对比模式下都隐藏小框手柄 ---
+                    if (displayMode !== 'translation' && displayMode !== 'comparison' && r.lines) {
+                    // 只有在纯原文模式下才画小框控制点
                         // 【核心修改】：在这里增加 lIdx (行索引) 的判断
                         r.lines.forEach((line, lIdx) => {
                             // 只有当这一行的索引等于当前点中的索引时，才画它的手柄
@@ -5163,41 +5306,58 @@ ctx.translate(0, Math.round(charY));
 
         function resizeCanvas() {
             if(!currentImage) return;
-            const w = currentImage.width;
-            const h = currentImage.height;
 
-            mainCanvas.width = w; 
-            mainCanvas.height = h;
+            const oldW = paintCanvas.width;
+            const oldH = paintCanvas.height;
+
+            // 只有在尺寸真正变化时才重设，减少性能损耗
+            if (oldW !== currentImage.width || oldH !== currentImage.height) {
+                mainCanvas.width = currentImage.width; 
+                mainCanvas.height = currentImage.height;
+                paintCanvas.width = currentImage.width;
+                paintCanvas.height = currentImage.height;
+                
+                // 【关键】重设尺寸后，如果内存里有涂鸦，立刻画回去
+                const item = matchedFiles[currentFileIndex];
+                if (item && item.paint_raw) {
+                    const pImg = new Image();
+                    pImg.onload = () => {
+                        paintCtx.drawImage(pImg, 0, 0);
+                        draw(); // 确保文字层和涂鸦层顺序正确
+                    };
+                    pImg.src = item.paint_raw;
+                }
+            }
+
+            // 3. 设置对比层（v19新增）
+            if(window.comparisonRawImg) {
+                comparisonRawImg.width = currentImage.width;
+                comparisonRawImg.height = currentImage.height;
+            }
             
-            // 【核心修复】必须设置涂鸦画布的尺寸，否则无法绘图
-            paintCanvas.width = w;
-            paintCanvas.height = h;
+            // 确定当前活动的容器（对比模式下是左边的 div）
+            const activeContainer = (displayMode === 'comparison') ? leftCompare : document.getElementById('canvasContainer');
+            const rect = activeContainer.getBoundingClientRect();
             
-            const container = document.getElementById('canvasContainer');
-            const rect = container.getBoundingClientRect();
-            
-            // 预留 40px 的视觉边距，不让图片贴边太死
             const padding = 40; 
             const availableW = rect.width - padding;
             const availableH = rect.height - padding;
 
             const scaleX = availableW / currentImage.width;
             const scaleY = availableH / currentImage.height;
-            
-            // [修改] 取消 Math.min(..., 1)，允许自动放大适应屏幕
-            // 这样图片一开始就会尽可能大（适应窗口）
             const initScale = Math.min(scaleX, scaleY) * 0.95; 
             
             viewState.scale = initScale;
-            // 居中计算
+            // 在当前容器内居中
             viewState.x = (rect.width - currentImage.width * initScale) / 2;
             viewState.y = (rect.height - currentImage.height * initScale) / 2;
             
             updateCanvasTransform();
-            // 新增：让 UI 画布覆盖整个容器窗口
             
-            uiCanvas.width = container.clientWidth;
-            uiCanvas.height = container.clientHeight;
+            // UI Canvas 仍需覆盖整个大的 canvasContainer
+            const fullContainer = document.getElementById('canvasContainer');
+            uiCanvas.width = fullContainer.clientWidth;
+            uiCanvas.height = fullContainer.clientHeight;
         }
         function exportImage() {
             if(!currentImage) return alert("无图片");
@@ -5492,6 +5652,10 @@ ctx.translate(0, Math.round(charY));
 
                 currentImage = mainImg;
                 currentFileName = item.image.name.split('.')[0];
+                // --- 新增：如果当前处于对比模式，同步更新右侧原图的 src ---
+                if (displayMode === 'comparison' && comparisonRawImg) {
+                    comparisonRawImg.src = currentImage.src;
+                }
                 resizeCanvas();
 
                 // 4. 异步加载修复图
@@ -6011,14 +6175,19 @@ ctx.translate(0, Math.round(charY));
             letterSpacingInput.disabled = false;
             strokeWidthInput.disabled = false;
         }
-        function scrollToSidebar(i) { const item = document.getElementById(`sb-${i}`); if(item) item.scrollIntoView({behavior:'smooth', block:'center'}); }
         function getMousePos(e) { 
-            const rect = document.getElementById('canvasContainer').getBoundingClientRect();
-            // 鼠标在容器内的坐标
-            const clientX = e.clientX - rect.left;
-            const clientY = e.clientY - rect.top;
+            const rect = canvasContainer.getBoundingClientRect();
+            let clientX = e.clientX - rect.left;
+            let clientY = e.clientY - rect.top;
 
-            // 反推回画布坐标： (容器坐标 - 偏移量) / 缩放比例
+            // 对比模式下，右侧的点击视为对左侧相同位置的操作
+            if (displayMode === 'comparison') {
+                const halfWidth = rect.width / 2;
+                if (clientX > halfWidth) {
+                    clientX -= halfWidth;
+                }
+            }
+
             return { 
                 x: (clientX - viewState.x) / viewState.scale, 
                 y: (clientY - viewState.y) / viewState.scale 
