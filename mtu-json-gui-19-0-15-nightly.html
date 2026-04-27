@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v19.0.13)</title>
+    <title>MTU 嵌字编辑器 (v19.0.15)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -955,7 +955,14 @@
 
 
 
-
+        /**
+        * 拦截浏览器刷新/关闭行为
+        */
+        window.addEventListener('beforeunload', (e) => {
+            // 删掉 if (isCanvasDirty)
+            e.preventDefault();
+            e.returnValue = ''; // 只要触发这个，浏览器就会弹窗
+        });
 
         /**
          * 将当前画布上的涂鸦和蒙版数据持久化到内存数组中
@@ -1268,7 +1275,23 @@
                 matchedFiles[currentFileIndex].mask_raw = base64;
             }
         }
+        // 新增：全量同步当前页所有数据（文本 + 涂鸦 + 蒙版）到内存
+        function saveCurrentStateToMemory() {
+            if (currentFileIndex === -1 || !matchedFiles[currentFileIndex]) return;
 
+            const item = matchedFiles[currentFileIndex];
+            
+            // 1. 同步文本框数据
+            item.regions = JSON.parse(JSON.stringify(regions));
+            
+            // 2. 同步涂鸦层（Base64 快照）
+            item.paint_raw = paintCanvas.toDataURL();
+            
+            // 3. 同步蒙版层（Base64 字符串）
+            item.mask_raw = maskCanvas.toDataURL('image/png').split(',')[1];
+            
+            console.log(`Page #${currentFileIndex + 1} state synced.`);
+        }
 
         // --- [新增] Base64 转图像工具 ---
         function loadMaskFromBase64(base64Str) {
@@ -1406,8 +1429,16 @@
                 if (!confirm(`确定要在全书 ${matchedFiles.length} 页中执行批量替换吗？`)) return;
 
                 // 先保存当前页到内存
-                if (matchedFiles[currentFileIndex]) {
-                    matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
+                // --- 修改后 ---
+                if (isGlobal && matchedFiles.length > 0) {
+                    if (!confirm(`确定要在全书 ${matchedFiles.length} 页中执行批量替换吗？`)) return;
+
+                    // 【关键修复】：保存当前页所有状态，包括你的画笔涂白！
+                    saveCurrentStateToMemory(); 
+
+                    // ... 后续的批量逻辑保持不变 ...
+                    
+                    loadFile(currentFileIndex); // 此时加载的就是刚刚存好的带涂鸦的数据了
                 }
 
                 matchedFiles.forEach(file => {
@@ -1626,10 +1657,8 @@
 
             if (isBatch) {
                 // 保存当前页数据到内存
-                if (matchedFiles[currentFileIndex]) {
-                    matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
-                    matchedFiles[currentFileIndex].paint_raw = currentPaintData;
-                }
+                // 【关键修复】：替换掉原本零散的保存逻辑
+                saveCurrentStateToMemory();
 
                 // 批量修改内存数据
                 matchedFiles.forEach(fileItem => {
