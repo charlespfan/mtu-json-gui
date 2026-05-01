@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v19.0.15)</title>
+    <title>MTU 嵌字编辑器 (v19.0.16)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -3535,40 +3535,39 @@
             // 2. 中层：渲染修复图
             // --- 修改后的 draw() 函数内部关于修复图的部分 ---
 
+            // 修复版代码块
             if ((displayMode === 'translation' || displayMode === 'comparison') && paintCanvas.width > 0) {
-                ctx.save();
-                ctx.globalAlpha = repairOpacity; 
+                // 增加：只有当修复图确实存在时，才进行透明度相关的绘制
+                if (currentRepairImage) {
+                    ctx.save();
+                    try {
+                        ctx.globalAlpha = repairOpacity; 
 
-                if (ignoreMaskForRepair) {
-                    // 全图修复模式：直接绘制
-                    ctx.drawImage(currentRepairImage, 0, 0, mainCanvas.width, mainCanvas.height);
-                } else if (maskCanvas.width > 0) {
-                    // --- 优化后的透明合成逻辑 ---
-                    
-                    // 1. 确保离屏画布尺寸与主画布一致
-                    if (compCanvas.width !== mainCanvas.width || compCanvas.height !== mainCanvas.height) {
-                        compCanvas.width = mainCanvas.width;
-                        compCanvas.height = mainCanvas.height;
+                        if (ignoreMaskForRepair) {
+                            ctx.drawImage(currentRepairImage, 0, 0, mainCanvas.width, mainCanvas.height);
+                        } else if (maskCanvas.width > 0) {
+                            // 确保离屏画布尺寸一致
+                            if (compCanvas.width !== mainCanvas.width || compCanvas.height !== mainCanvas.height) {
+                                compCanvas.width = mainCanvas.width;
+                                compCanvas.height = mainCanvas.height;
+                            }
+
+                            compCtx.clearRect(0, 0, compCanvas.width, compCanvas.height);
+                            compCtx.drawImage(currentRepairImage, 0, 0, compCanvas.width, compCanvas.height);
+                            
+                            compCtx.globalCompositeOperation = 'destination-in';
+                            compCtx.drawImage(maskCanvas, 0, 0, compCanvas.width, compCanvas.height);
+                            compCtx.globalCompositeOperation = 'source-over';
+
+                            ctx.drawImage(compCanvas, 0, 0);
+                        }
+                    } catch (e) {
+                        console.error("渲染修复层时发生错误:", e);
+                    } finally {
+                        // 关键：无论绘制是否成功，都强制恢复画布状态，防止透明度污染底图
+                        ctx.restore(); 
                     }
-
-                    // 2. 在离屏画布上进行合成
-                    compCtx.clearRect(0, 0, compCanvas.width, compCanvas.height);
-                    
-                    // 先画修复图
-                    compCtx.drawImage(currentRepairImage, 0, 0, compCanvas.width, compCanvas.height);
-                    
-                    // 使用 destination-in 模式：只保留与蒙版重合的部分，其余变透明
-                    compCtx.globalCompositeOperation = 'destination-in';
-                    compCtx.drawImage(maskCanvas, 0, 0, compCanvas.width, compCanvas.height);
-                    
-                    // 切回默认模式，防止影响下一次绘图
-                    compCtx.globalCompositeOperation = 'source-over';
-
-                    // 3. 将合成好的“透明修复碎片”画到主画布上
-                    ctx.drawImage(compCanvas, 0, 0);
                 }
-                
-                ctx.restore();
             }
 
             // --- 3. 关键层：半透明红色可视化层 ---
