@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v19.0.16)</title>
+    <title>MTU 嵌字编辑器 (v19.0.17)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -1002,6 +1002,8 @@
         });
         autoFillBtnRight.onclick = async () => {
             if (matchedFiles.length === 0) return alert("请先批量导入项目文件夹！");
+            // 【新增】在开始批量填充前，先把当前页你改过的字存好
+            saveCurrentStateToMemory();
             const originalText = autoFillBtnRight.innerText;
             autoFillBtnRight.innerText = "处理中...";
             autoFillBtnRight.disabled = true;
@@ -1950,6 +1952,8 @@
         };
 
         replaceBtnRight.onclick = () => {
+            // 【新增】保存当前屏幕上的修改到内存，防止被后续的 loadFile 覆盖
+            saveCurrentStateToMemory();
             const isBatch = matchedFiles.length > 0;
             const scope = isBatch ? `全书 (${matchedFiles.length}页)` : "当前页";
             
