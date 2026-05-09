@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v19.0.17)</title>
+    <title>MTU 嵌字编辑器 (v19.2.10)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -115,12 +115,101 @@
             overflow: hidden;
             position: relative;
         }
+
+
+        /* 工具栏容器：增加一点磨砂感和边框 */
+        #advancedToolbox {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+        }
+
+        /* 基础按钮样式：添加明显的边框和背景 */
+        .adv-tool-btn {
+            background-color: #374151; /* bg-gray-700 */
+            border: 1px solid #4b5563; /* border-gray-600 */
+            color: #e5e7eb;            /* text-gray-200 */
+            border-radius: 0.5rem;     /* rounded-lg */
+            padding: 0.2rem 0;         /* py-2 */
+            font-weight: 600;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+        }
+
+        /* 悬停效果：边框变亮，背景微调 */
+        .adv-tool-btn:hover {
+            background-color: #4b5563; /* bg-gray-600 */
+            border-color: #9ca3af;     /* border-gray-400 */
+            transform: translateY(-1px);
+        }
+
+        /* 点击按下效果 */
+        .adv-tool-btn:active {
+            transform: translateY(1px);
+            background-color: #1f2937; /* bg-gray-900 */
+        }
+
+        /* 激活状态：蓝色发光边框 */
+        .adv-tool-btn.active {
+            background-color: #2563eb !important; /* bg-blue-600 */
+            border-color: #60a5fa !important;     /* border-blue-400 */
+            color: white !important;
+            box-shadow: 0 0 15px rgba(37, 99, 235, 0.5);
+            border-width: 1.5px;
+        }
+        /* 等待旋转动画 */
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-left-color: #3b82f6; /* 蓝色 */
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 1rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
-<body class="flex flex-col h-screen">
 
+
+
+<body class="flex flex-col h-screen">
+    <div id="advancedToolbox" class="hidden fixed top-20 right-16 z-[60] bg-gray-800/90 backdrop-blur-md border border-gray-600 p-3 rounded-xl flex flex-col gap-4 w-20">
+        <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center border-b border-gray-700 pb-2">绘图工具</div>
+        
+        <div class="grid grid-cols-2 gap-2">
+            <button onclick="setAdvTool('clone')" class="adv-tool-btn">印</button>
+            <button onclick="setAdvTool('line')" class="adv-tool-btn">线</button>
+            <button onclick="setAdvTool('curve')" class="adv-tool-btn">曲</button>
+            <button onclick="setAdvTool('lasso')" class="adv-tool-btn">套</button>
+            <button onclick="setAdvTool('pen')" class="adv-tool-btn">钢</button>
+            <button onclick="setAdvTool('picker')" class="adv-tool-btn">吸</button>
+        </div>
+
+        <div class="space-y-3 pt-4 border-t border-gray-700">
+            <!-- 大小设置 -->
+            <div class="flex flex-col items-center">
+                <span class="text-[9px] text-gray-400 uppercase tracking-wider font-bold mb-1">大小</span>
+                <input type="number" id="maskBrushSizeInput" min="1" max="200" value="35" 
+                    class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 w-14 h-6 text-center focus:border-blue-500 transition-colors outline-none">
+            </div>
+
+            <!-- 容差设置 -->
+            <div class="flex flex-col items-center">
+                <span class="text-[9px] text-gray-400 uppercase tracking-wider font-bold mb-1">容差</span>
+                <input type="number" id="advToleranceInput" min="0" max="255" value="30" 
+                    class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 w-14 h-6 text-center focus:border-purple-500 transition-colors outline-none">
+            </div>
+        </div>
+    </div>
     <div id="loadingMask" class="modal-mask" style="flex-direction: column; color: white;">
-        <div class="text-xl font-bold mb-2">正在加载字体...</div>
+        <div class="spinner"></div> <!-- 新增动画容器 -->
+        <div id="loadingText" class="text-xl font-bold mb-2">正在加载...</div>
     </div>
 
     <!-- Confirm Modal -->
@@ -219,6 +308,9 @@
                 </label>
                 <label class="checkbox-label text-xs text-gray-300 flex items-center gap-1 cursor-pointer">
                     <input type="checkbox" id="showMaskCb" class="accent-red-600">显蒙
+                </label>    
+                <label class="checkbox-label text-xs text-gray-300 flex items-center gap-1 cursor-pointer">
+                    <input type="checkbox" id="showPaintMaskCb" class="accent-blue-600">显涂
                 </label>
                 <div class="flex flex-col items-center ml-2 border-l border-gray-700 pl-2">
                     <span class="text-[9px] text-gray-400">修复层透明度</span>
@@ -273,7 +365,7 @@
              <div class="flex flex-col">
                 <span class="text-[9px] text-gray-400 uppercase tracking-wider">字体</span>
                 <div class="flex gap-1">
-                    <select id="fontSelect" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 outline-none focus:border-blue-500 w-24 h-6">
+                    <select id="fontSelect" class="hidden bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 outline-none focus:border-blue-500 w-24 h-6">
                         <option value='"Noto Sans SC", sans-serif'>思源黑体</option>
                         <option value='"Source Han Sans SC", "Source Han Sans CN", "Noto Sans SC", sans-serif'>思源黑体 (本地)</option>
                         <option value='"Microsoft YaHei", sans-serif'>微软雅黑</option>
@@ -281,7 +373,10 @@
                         <option value='"KaiTi", serif'>楷体</option>
                         <option value="custom">手动...</option>
                     </select>
-                    <button onclick="detectSystemFonts()" class="bg-blue-600 hover:bg-blue-500 text-white text-[10px] rounded px-1.5 flex items-center h-6" title="检测系统所有字体">
+                    <button onclick="openFontPicker()" id="currentFontBtn" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-2 py-0.5 outline-none hover:border-blue-500 w-24 h-6 overflow-hidden text-ellipsis whitespace-nowrap">
+                        思源黑体
+                    </button>
+                    <button onclick="handleDetectAndRefresh()" class="bg-blue-600 hover:bg-blue-500 text-white text-[10px] rounded px-1.5 flex items-center h-6" title="检测系统字体并刷新列表">
                         检
                     </button>
                     <label class="bg-purple-600 hover:bg-purple-500 text-white text-[10px] rounded px-2 flex items-center cursor-pointer" title="加载本地字体文件，可多选支持.ttf .otf .woff">
@@ -440,6 +535,22 @@
                         <input type="color" id="nativeBlurPicker" class="hidden">
                     </div>
                 </div>
+                <!-- 在原本的描边控制区后面添加外描边控制 -->
+                <div class="flex flex-col items-center ml-2 border-l border-gray-700 pl-2">
+                    <span class="text-[9px] text-gray-400">外描边</span>
+                    <div class="flex items-center gap-1">
+                        <input type="checkbox" id="outerStrokeEnable" class="h-3 w-3 cursor-pointer" title="启用外描边">
+                        <div id="btnOuterStrokeColor" class="color-swatch-btn" style="background-color: #000000;" title="点击修改外描边颜色"></div>
+                        <input type="color" id="nativeOuterStrokePicker" class="hidden">
+                        <input type="number" id="outerStrokeWidthInput" step="0.05" min="0" max="5" value="0.4" 
+                            class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 w-14 h-6 text-center focus:border-blue-500 outline-none" 
+                            title="外描边粗细">
+                        <label class="flex items-center cursor-pointer ml-1" title="外填孔 (多层叠加，解决外描边空心问题)">
+                            <input type="checkbox" id="outerFillHolesCb" class="h-3 w-3 accent-blue-500">
+                            <span class="text-[9px] text-gray-400 ml-0.5">外填孔</span>
+                        </label>
+                    </div>
+                </div>
             </div>
             
         </div>
@@ -470,7 +581,8 @@
                     <button class="rt-btn text-green-300" onclick="insertTagWithParam('rot', '角度', '24')" title="旋转 [rot=24]">[Rot]</button>
                     <button class="rt-btn text-orange-400" onclick="insertTag('m')" title="水平翻转 [m]">[Mh]</button>
                     <button class="rt-btn text-pink-400" onclick="insertTag('mv')" title="竖向翻转 [mv]">[Mv]</button>
-                    <button class="rt-btn text-yellow-300" onclick="insertTagWithParam('k', '间距', '0.5')" title="字距调整 [k=0.5]">[K]</button>
+                    <button class="rt-btn text-yellow-300" onclick="insertTagWithParam('k', '后间距', '0.5')" title="后字距调整 [k=0.5]">[K]</button>
+                    <button class="rt-btn text-yellow-300" onclick="insertTagWithParam('prek', '前间距', '0.5')" title="前字距调整 [prek=0.5]">[pK]</button>
                     <button class="rt-btn text-yellow-300" onclick="insertTagWithParam('x', 'X位移', '5')" title="水平位移 [x=5]">[X]</button>
                     <button class="rt-btn text-yellow-300" onclick="insertTagWithParam('y', 'Y位移', '5')" title="垂直位移 [y=5]">[Y]</button>
                     <button class="rt-btn" onclick="insertTag('t')" title="纵中横 [t]">[T]</button>
@@ -492,7 +604,18 @@
                     <button class="rt-btn text-purple-300" onclick="insertText('『')" title="左双角引号">『</button>
                     <button class="rt-btn text-purple-300" onclick="insertText('』')" title="右双角引号">』</button>
                     <button class="rt-btn text-orange-300" onclick="insertText('〝')" title="前竖引号">〝</button>
-                    <button class="rt-btn text-orange-300" onclick="insertText('〟')" title="后竖引号">〟</button>
+                    <!-- 修改后的代码 -->
+                    <button class="rt-btn text-orange-300" 
+                            onclick="
+                                const dir = (activeRegionIndex !== -1 && regions[activeRegionIndex]) ? regions[activeRegionIndex].direction : 'v';
+                                const str = (dir === 'v') 
+                                    ? '[prek=0.25][k=-0.5][m][mv]〝[/mv][/m][/k][/prek]' 
+                                    : '[prek=0.5][k=-0.5][m][mv]〝[/mv][/m][/k][/prek]';
+                                insertText(str);
+                            " 
+                            title="后竖引号">
+                            <span style="font-family: 'Noto Sans JP', sans-serif;">〟</span>
+                    </button>
                     <button class="rt-btn text-blue-300" onclick="insertText('!')" title="半角感叹号">!</button>
                     <button class="rt-btn text-blue-300" onclick="insertText('?')" title="半角问号">?</button>
                     <button class="rt-btn text-blue-300" onclick="insertText('[rot=24]![/rot]')" title=""><span style="display: inline-block; transform: rotate(24deg);">!</span></button>
@@ -613,8 +736,8 @@
                     -->
                     <button id="deleteBtnRight" class="rt-btn text-red-500 border-red-500/30" title="删除选中，alt+左键画线可多选">删</button>
                 </div>
-                <button onclick="toggleReplaceDialog()" class="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded">译文查找替换</button>
-                <div id="replaceDialog" class="hidden fixed top-20 right-12 z-50 bg-gray-800 border border-gray-600 p-4 rounded-lg shadow-2xl w-80">
+                <div class="flex flex-col gap-2"><button onclick="toggleReplaceDialog()" class="rt-btn" title="译文查找替换">查</button></div>
+                <div id="replaceDialog" class="hidden fixed bottom-12 right-16 z-50 bg-gray-800 border border-gray-600 p-4 rounded-lg shadow-2xl w-80">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-white font-bold text-sm">译文查找与导航</h3>
                         <button onclick="toggleReplaceDialog()" class="text-gray-400 hover:text-white">✕</button>
@@ -653,10 +776,33 @@
                         </div>
                     </div>
                 </div>
-                <button class="rt-btn text-rainbow" 
-                        onclick="document.getElementById('rtColorPicker').click()" 
-                        title="调色盘">🎨</button>
+                <!-- 字体选择弹窗 -->
+                <!-- 字体面板：改为左侧常驻，去掉背景遮罩和模糊 -->
+                <!-- 核心改动：left-0 -> left-[384px] -->
+                <!-- 修改点：inset-y-0 改为 top-16 bottom-0，确保不挡住 h-16 的顶栏 -->
+                <div id="fontPickerDialog" class="hidden fixed top-16 bottom-0 left-[384px] z-[60] w-64 bg-gray-800/95 border-r border-gray-700 shadow-2xl flex flex-col p-2">
+                    <div class="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                        <h3 class="text-white font-bold text-sm uppercase tracking-widest">字体库</h3>
+                        <button onclick="closeFontPicker()" class="text-gray-400 hover:text-white bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded text-xs">
+                            收起 ✕
+                        </button>
+                    </div>
+                    
+                    <div id="fontPickerList" class="flex-grow overflow-y-auto space-y-1 pr-2 custom-scrollbar">
+                        <!-- 列表内容 -->
+                    </div>
 
+                    <div class="mt-4 pt-4 border-t border-gray-700 space-y-2">
+                        <button onclick="document.getElementById('fontFileInput').click()" class="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition-colors">
+                            + 加载本地字体
+                        </button>
+                    </div>
+                </div>
+                <div class="flex flex-col gap-2">
+                    <button class="rt-btn text-rainbow" 
+                            onclick="document.getElementById('rtColorPicker').click()" 
+                            title="调色盘">🎨</button>
+                </div>
                 <input type="color" id="rtColorPicker" 
                     class="absolute opacity-0 pointer-events-none" 
                     style="right: 0; top: 70%;"
@@ -668,7 +814,7 @@
                 </button>
                 <div class="w-8 h-px bg-gray-700 mx-auto"></div>
                 <div class="flex flex-col gap-2">
-                    <button id="maskBrushBtn" class="rt-btn !hidden" title="蒙版画笔 (右键画，中键擦，快捷键: < 和 > 调节笔触大小)">🖌️</button>
+                    <button id="maskBrushBtn" class="rt-btn" title="蒙版画笔 (右键画，中键擦，快捷键: < 和 > 调节笔触大小)">🖌️</button>
                     <button id="maskEraserBtn" class="rt-btn" title="蒙版橡皮 (右键擦，中键画，快捷键: < 和 > 调节笔触大小)">🧽</button>
                 </div>
                 <div class="w-8 h-px bg-gray-700 mx-auto"></div>
@@ -677,7 +823,7 @@
                     <button id="paintColorBtn" class="rt-btn" title="涂鸦颜色" style="background-color: #ffffff; color: #000;" 
                             onclick="document.getElementById('paintColorPicker').click()">色</button>
                     <input type="color" id="paintColorPicker" value="#ffffff" class="hidden">
-                    <button id="paintEraserBtn" class="rt-btn !hidden" title="涂鸦橡皮 (右键擦，中键画，快捷键: < 和 > 调节笔触大小)">🧹</button>
+                    <button id="paintEraserBtn" class="rt-btn" title="涂鸦橡皮 (右键擦，中键画，快捷键: < 和 > 调节笔触大小)">🧹</button>
                     <button id="comboModeBtn" class="rt-btn text-purple-400 border-purple-500/30" title="混合模式：右键自由涂鸦，中键蒙版橡皮，快捷键: < 和 > 调节笔触大小">混</button>
                     <button id="autoFillBtnRight" class="rt-btn text-green-400 border-green-500/30" title="自动背景填充：检测行框边缘并填充纯黑/纯白">填</button>
                     <label class="flex items-center cursor-pointer mb-1" title="开启后，自动填充会尝试覆盖气泡外的注音">
@@ -770,7 +916,7 @@
         // --- 蒙版编辑相关变量 ---
         let showMask = false;       // <--- 新增：控制红色层显示
         let maskEditMode = 'none'; // <--- 新增：蒙版编辑模式 ('brush', 'eraser', 'none')
-        let maskBrushSize = 35;    // <--- 新增：笔触大小
+
 
         let isMaskDragging = false; // [新增] 专门记录蒙版涂抹状态
         // 1. 在变量定义区添加
@@ -804,6 +950,18 @@
 
         let enableFirstLineExpand = false; // 默认开启扩张逻辑
         let paintOpacity = 1.0; // 默认不透明
+        // 高级工具状态
+        let currentAdvTool = 'none';
+        let advTolerance = 30;
+        let maskBrushSize = 35;
+        let cloneSource = null; // 仿制图章的源坐标
+        let pathPoints = [];    // 用于直线、曲线、钢笔的轨迹点
+        let isAdvDragging = false;
+        // [新增] 外描边全局变量
+        let activeOuterStrokeColor = "#000000"; 
+        let activeOuterStrokeWidth = 0.4; // 比例，0.4 表示 40% 字号
+        let activeOuterStrokeEnabled = false;
+        let showPaintMask = false; // 控制蓝色遮罩显示
 
         // --- 在脚本顶部的变量定义区 ---
         const mainCanvas = document.getElementById('mainCanvas');
@@ -953,16 +1111,392 @@
         const paintOpacityRange = document.getElementById('paintOpacityRange');
         const paintOpacityValue = document.getElementById('paintOpacityValue');
 
+        // 获取新的 DOM 引用
+        const maskSizeField = document.getElementById('maskBrushSizeInput');
+        const toleranceField = document.getElementById('advToleranceInput');
 
 
-        /**
-        * 拦截浏览器刷新/关闭行为
-        */
+
+
+
+
+
+
+
+        document.getElementById('showPaintMaskCb').addEventListener('change', (e) => { 
+            showPaintMask = e.target.checked; 
+            draw(); // 立即触发重绘
+        });
+
+        // 绑定外描边颜色选择
+        document.getElementById('btnOuterStrokeColor').onclick = () => document.getElementById('nativeOuterStrokePicker').click();
+        document.getElementById('nativeOuterStrokePicker').oninput = (e) => {
+            const color = e.target.value;
+            document.getElementById('btnOuterStrokeColor').style.backgroundColor = color;
+            batchUpdateProp('outerStrokeColor', color);
+        };
+        document.getElementById('outerStrokeEnable').onchange = (e) => batchUpdateProp('outerStrokeEnable', e.target.checked);
+        document.getElementById('outerStrokeWidthInput').oninput = (e) => batchUpdateProp('outerStrokeWidthRatio', parseFloat(e.target.value));
+        // [新增] 外描边填孔监听
+        document.getElementById('outerFillHolesCb').onchange = (e) => batchUpdateProp('outer_fill_holes', e.target.checked);
+
+        // [新增] 联动逻辑函数
+        window.handleDetectAndRefresh = async function() {
+            const dialog = document.getElementById('fontPickerDialog');
+            const mask = document.getElementById('loadingMask');
+            const loadingText = document.getElementById('loadingText');
+
+            // 1. 如果面板开着，先记录状态并暂时关闭（避免权限弹窗时界面混乱）
+            const wasOpen = dialog && !dialog.classList.contains('hidden');
+            if (wasOpen) window.closeFontPicker(); 
+
+            try {
+                // 2. 检查浏览器支持并唤起权限弹窗
+                if (!('queryLocalFonts' in window)) return alert("您的浏览器不支持此功能，请使用最新版 Chrome 或 Edge");
+                
+                // 这里是阻塞点：用户没点击“允许”之前，代码会停在这里，且不显示动画
+                const fonts = await window.queryLocalFonts(); 
+
+                // 3. 用户点击“允许”后，立刻开启等待动画[cite: 1]
+                mask.style.display = 'flex';
+                if (loadingText) loadingText.innerText = "权限已获取，正在处理海量字体数据...";
+
+                // 4. 使用 setTimeout 给浏览器留出“画出”动画的间隙
+                // 否则后续高强度的 DOM 操作会直接卡死主线程，导致动画根本出不来[cite: 1]
+                setTimeout(() => {
+                    // A. 执行数据同步（处理上千个字体的排序与注入）[cite: 1]
+                    const families = [...new Set(fonts.map(f => f.family))].sort();
+                    const fontSelect = document.getElementById('fontSelect');
+                    const group = document.createElement('optgroup');
+                    group.label = "--- 系统字体 ---";
+                    
+                    families.forEach(family => {
+                        const option = document.createElement('option');
+                        option.value = `"${family}", sans-serif`;
+                        option.textContent = family;
+                        group.appendChild(option);
+                    });
+                    fontSelect.appendChild(group);
+
+                    // B. 如果之前面板是打开的，重新构建列表并滑出[cite: 1]
+                    if (wasOpen) {
+                        window.openFontPicker(); 
+                    } else {
+                        alert(`同步完成！已成功识别 ${families.length} 种系统字体。`);
+                    }
+
+                    // 5. 任务结束，彻底关闭动画[cite: 1]
+                    mask.style.display = 'none';
+                }, 50);
+
+            } catch (err) {
+                console.error("检测中断或权限被拒绝:", err);
+                mask.style.display = 'none';
+            }
+        };
+
+        // [新增] 专门负责刷新字体面板列表的函数
+        window.refreshFontPickerList = function() {
+            const fontSelect = document.getElementById('fontSelect'); 
+            const listContainer = document.getElementById('fontPickerList');
+            if (!fontSelect || !listContainer) return;
+
+            listContainer.innerHTML = ''; 
+            const fragment = document.createDocumentFragment();
+
+            // 【新增】获取当前应该被高亮的字体[cite: 1]
+            let currentActiveFont = activeFontFamily;
+            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
+                currentActiveFont = regions[activeRegionIndex].fontFamily || activeFontFamily;
+            }
+
+            Array.from(fontSelect.options).forEach(opt => {
+                if (!opt.value || opt.value === 'custom') return;
+                // ... 在生成按钮的循环内部 ...
+                const btn = document.createElement('button');
+
+                // [新增] 开启原生拖拽属性
+                btn.draggable = true; 
+
+                // [新增] 记录拖拽开始事件
+                btn.ondragstart = (ev) => {
+                    // 提取纯净的字体名（例如从 '"MyFont_1", sans-serif' 中提取 'MyFont_1'）
+                    const cleanName = opt.value.replace(/"/g, '').split(',')[0].trim();
+                    
+                    // 设置拖拽数据
+                    ev.dataTransfer.setData("text/plain", cleanName);
+                    
+                    // 设置拖拽时的视觉效果（可选）
+                    ev.dataTransfer.effectAllowed = "copy";
+                };
+
+                // ... 原有的 className、style、innerHTML 和 onclick 逻辑保持不变 ...
+                
+                // 【新增】比对是否是当前选中的字体，应用不同样式[cite: 1]
+                if (opt.value === currentActiveFont) {
+                    btn.className = "w-full p-2 bg-blue-600 border-2 border-blue-400 rounded text-left text-white transition-all mb-1 shadow-[0_0_10px_rgba(37,99,235,0.4)]";
+                } else {
+                    btn.className = "w-full p-2 bg-gray-900 hover:bg-gray-700 border border-gray-700 rounded text-left text-white transition-all mb-1";
+                }
+                
+                btn.style.fontFamily = opt.value; 
+                btn.innerHTML = `<span class="text-sm block truncate">${opt.text}</span>`;
+                btn.onclick = () => {
+                    batchUpdateProp('fontFamily', opt.value);
+                    const currentFontBtn = document.getElementById('currentFontBtn');
+                    if (currentFontBtn) currentFontBtn.innerText = opt.text;
+                    // 点击后立即刷新列表自身，让高亮框跳到刚刚点击的按钮上[cite: 1]
+                    window.refreshFontPickerList();
+                };
+                fragment.appendChild(btn);
+            });
+            listContainer.appendChild(fragment);
+        };
+
+        window.openFontPicker = function() {
+            const dialog = document.getElementById('fontPickerDialog');
+            const fontSelect = document.getElementById('fontSelect'); 
+            const listContainer = document.getElementById('fontPickerList');
+
+            if (!dialog || !fontSelect || !listContainer) return;
+
+            if (!dialog.classList.contains('hidden')) {
+                window.closeFontPicker();
+                return;
+            }
+
+            listContainer.innerHTML = ''; 
+            const fragment = document.createDocumentFragment();
+
+            Array.from(fontSelect.options).forEach(opt => {
+                if (!opt.value || opt.value === 'custom') return;
+                // ... 在生成按钮的循环内部 ...
+                const btn = document.createElement('button');
+
+                // [新增] 开启原生拖拽属性
+                btn.draggable = true; 
+
+                // [新增] 记录拖拽开始事件
+                btn.ondragstart = (ev) => {
+                    // 提取纯净的字体名（例如从 '"MyFont_1", sans-serif' 中提取 'MyFont_1'）
+                    const cleanName = opt.value.replace(/"/g, '').split(',')[0].trim();
+                    
+                    // 设置拖拽数据
+                    ev.dataTransfer.setData("text/plain", cleanName);
+                    
+                    // 设置拖拽时的视觉效果（可选）
+                    ev.dataTransfer.effectAllowed = "copy";
+                };
+
+                // ... 原有的 className、style、innerHTML 和 onclick 逻辑保持不变 ...
+
+                // 【新增】获取当前字体[cite: 1]
+                let currentActiveFont = activeFontFamily;
+                if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
+                    currentActiveFont = regions[activeRegionIndex].fontFamily || activeFontFamily;
+                }
+
+                // 【新增】判断高亮[cite: 1]
+                if (opt.value === currentActiveFont) {
+                    btn.className = "w-full p-2 bg-blue-600 border-2 border-blue-400 rounded text-left text-white transition-all mb-1 shadow-[0_0_10px_rgba(37,99,235,0.4)]";
+                } else {
+                    btn.className = "w-full p-2 bg-gray-900 hover:bg-gray-700 border border-gray-700 rounded text-left text-white transition-all mb-1";
+                }
+                
+                btn.style.fontFamily = opt.value; 
+                btn.innerHTML = `<span class="text-sm block truncate">${opt.text}</span>`;
+                
+                btn.onclick = () => {
+                    batchUpdateProp('fontFamily', opt.value);
+                    const currentFontBtn = document.getElementById('currentFontBtn');
+                    if (currentFontBtn) currentFontBtn.innerText = opt.text;
+                    window.refreshFontPickerList(); // 点击后重新渲染高亮[cite: 1]
+                };
+                fragment.appendChild(btn);
+            });
+
+            listContainer.appendChild(fragment);
+            dialog.classList.remove('hidden');
+        };
+
+        // 面板收起函数
+        window.closeFontPicker = function() {
+            document.getElementById('fontPickerDialog').classList.add('hidden');
+        };
+
         window.addEventListener('beforeunload', (e) => {
             // 删掉 if (isCanvasDirty)
             e.preventDefault();
             e.returnValue = ''; // 只要触发这个，浏览器就会弹窗
         });
+        
+
+        function setAdvTool(tool) {
+            const isAlreadyActive = (currentAdvTool === tool);
+
+            // 无论如何先清理所有状态
+            deactivateAllTools();
+
+            // 如果之前不是激活状态，现在开启它
+            if (!isAlreadyActive) {
+                currentAdvTool = tool;
+                
+                // 找到当前点击的按钮并添加高亮
+                // 建议在 HTML 的 onclick 传入 this 更加方便：onclick="setAdvTool('line', this)"
+                const btn = event.currentTarget; 
+                btn.classList.add('active');
+
+                // 设置光标
+                document.getElementById('canvasContainer').style.cursor = 'crosshair';
+                
+                // 如果是吸管工具，逻辑比较特殊
+                if (tool === 'picker') {
+                    // 吸管工具的逻辑已经在 onMouseDown 里处理，这里只需维持状态
+                }
+            }
+            
+            draw(); // 刷新画布
+        }
+
+        // 清除所有工具状态（高级工具 + 蒙版 + 涂鸦 + 混合模式）
+        function deactivateAllTools() {
+            // 1. 重置高级工具变量
+            currentAdvTool = 'none';
+            isAdvDragging = false;
+            pathPoints = [];
+
+            // 2. 重置原有模式变量
+            maskEditMode = 'none';
+            paintMode = 'none';
+            comboMode = false;
+            
+            // 3. 移除所有按钮的高亮样式 (统一使用 mask-active 或 active 类)
+            // 获取所有可能带高亮的按钮 ID
+            const allToolBtnIds = [
+                'maskBrushBtn', 'maskEraserBtn', 
+                'paintBrushBtn', 'paintEraserBtn', 
+                'comboModeBtn'
+            ];
+            allToolBtnIds.forEach(id => {
+                const btn = document.getElementById(id);
+                if (btn) btn.classList.remove('mask-active');
+            });
+
+            // 移除高级工具栏的 .active 高亮
+            document.querySelectorAll('.adv-tool-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            // 4. 恢复默认画布光标
+            document.getElementById('canvasContainer').style.cursor = 'grab';
+            
+            // 5. 额外清理：清除 UI 层的临时预览（如直线、套索轨迹）
+            uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+        }
+
+        function handleCloneStamp(pos, isFirstClick) {
+            if (isSpacePressed) return;
+            
+            // 如果按住 Alt 点击，设置取样源
+            if (window.event.altKey) {
+                cloneSource = { x: pos.x, y: pos.y };
+                return;
+            }
+
+            if (!cloneSource) return;
+
+            const dx = pos.x - dragStartPos.x; // 这里的 dragStartPos 需要在 mousedown 记录
+            const dy = pos.y - dragStartPos.y;
+
+            paintCtx.save();
+            paintCtx.beginPath();
+            paintCtx.arc(pos.x, pos.y, maskBrushSize / viewState.scale, 0, Math.PI * 2);
+            paintCtx.clip();
+            
+            // 将原图（或修复图）的源坐标内容绘制到当前位置
+            // 偏移量 = 鼠标当前位置 - 采样源位置
+            const offsetX = pos.x - cloneSource.x;
+            const offsetY = pos.y - cloneSource.y;
+            
+            paintCtx.drawImage(mainCanvas, -offsetX, -offsetY); 
+            paintCtx.restore();
+        }
+        function drawLinePreview(start, end) {
+            uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+            uiCtx.save();
+            // 坐标转换到 UI 画布
+            const s = toScreen(start);
+            const e = toScreen(end);
+            
+            uiCtx.beginPath();
+            uiCtx.moveTo(s.x, s.y);
+            uiCtx.lineTo(e.x, e.y);
+            uiCtx.strokeStyle = activePaintColor;
+            uiCtx.lineWidth = maskBrushSize * 2;
+            uiCtx.stroke();
+            uiCtx.restore();
+        }
+
+        // 辅助：物理坐标转屏幕坐标
+        function toScreen(pos) {
+            return {
+                x: pos.x * viewState.scale + viewState.x,
+                y: pos.y * viewState.scale + viewState.y
+            };
+        }
+
+
+
+        // 1. 大小输入框监听
+        // 彻底替换原本的逻辑，解决 Cannot set properties of null 报错
+        if (maskSizeField) {
+            maskSizeField.oninput = (e) => {
+                let val = parseInt(e.target.value);
+                if (!isNaN(val)) {
+                    maskBrushSize = Math.max(1, Math.min(val, 200)); // 更新全局变量
+                    draw(); 
+                }
+            };
+        }
+
+        if (toleranceField) {
+            toleranceField.oninput = (e) => {
+                let val = parseInt(e.target.value);
+                if (!isNaN(val)) {
+                    advTolerance = Math.max(0, Math.min(val, 255)); // 更新全局变量
+                    draw();
+                }
+            };
+        }
+        // 3. 同步快捷键调节逻辑[cite: 1]
+        // 找到之前的 syncBrushSizeUI 函数，确保它现在更新的是输入框的数值
+        function syncBrushSizeUI() {
+            const sizeVal = Math.round(maskBrushSize);
+            if (maskSizeField) maskSizeField.value = sizeVal; // 同步快捷键调节后的数值到输入框[cite: 1]
+        }
+
+        // 既然输入框本身就看得到数字，只要更新后台变量就行了
+        advToleranceInput.oninput = (e) => {
+            advTolerance = parseInt(e.target.value) || 0; // 增加 || 0 防止输入为空时出错
+            draw(); // 顺便触发一下重绘，让效果实时刷新
+        };
+
+        // 切换工具
+        function setAdvTool(tool) {
+            // 如果点击已激活的工具，则取消选择
+            if (currentAdvTool === tool) {
+                currentAdvTool = 'none';
+            } else {
+                currentAdvTool = tool;
+                // 自动退出其他编辑模式
+                clearAllTools(); 
+            }
+            
+            // UI 高亮切换
+            document.querySelectorAll('.adv-tool-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${currentAdvTool}'`));
+            });
+        }
 
         /**
          * 将当前画布上的涂鸦和蒙版数据持久化到内存数组中
@@ -1204,6 +1738,10 @@
             else if (prop === 'strokeWidthRatio') activeStrokeWidth = val; // 对应描边粗细
             else if (prop === 'strokeColor') activeStrokeColor = val;     // 对应描边颜色
             else if (prop === 'strokeEnable') activeStrokeEnabled = val;   // 对应描边开关
+
+            else if (prop === 'outerStrokeWidthRatio') activeOuterStrokeWidth = val;
+            else if (prop === 'outerStrokeColor') activeOuterStrokeColor = val;
+            else if (prop === 'outerStrokeEnable') activeOuterStrokeEnabled = val;
             // --- 新增：如果是间距或颜色等全局属性，且当前未选中任何框时，同步更新所有现有框 ---
             if (activeRegionIndex === -1 && selectedRegions.length === 0) {
                 regions.forEach(r => {
@@ -1277,6 +1815,7 @@
                 matchedFiles[currentFileIndex].mask_raw = base64;
             }
         }
+
         // 新增：全量同步当前页所有数据（文本 + 涂鸦 + 蒙版）到内存
         function saveCurrentStateToMemory() {
             if (currentFileIndex === -1 || !matchedFiles[currentFileIndex]) return;
@@ -1294,7 +1833,6 @@
             
             console.log(`Page #${currentFileIndex + 1} state synced.`);
         }
-
         // --- [新增] Base64 转图像工具 ---
         function loadMaskFromBase64(base64Str) {
             return new Promise((resolve) => {
@@ -1658,7 +2196,6 @@
             const currentPaintData = paintCanvas.toDataURL();
 
             if (isBatch) {
-                // 保存当前页数据到内存
                 // 【关键修复】：替换掉原本零散的保存逻辑
                 saveCurrentStateToMemory();
 
@@ -2000,6 +2537,7 @@
 
         // 升级后的“属”按钮逻辑
         // 升级后的“属”按钮逻辑：支持多选切换
+        // 升级后的“属”按钮逻辑：支持方向切换时自动重构特殊符号
         editPropBtnRight.onclick = () => {
             // 1. 确定操作目标：优先多选列表，其次单选红框
             let targetIndices = [];
@@ -2009,18 +2547,37 @@
                 targetIndices = [activeRegionIndex];
             }
 
-            // 2. 如果有目标，执行批量切换
             if (targetIndices.length > 0) {
+                // 定义需要互相转换的“竖排标签”和“横排标签”
+                const vTag = '[prek=0.25][k=-0.5][m][mv]〝[/mv][/m][/k][/prek]';
+                const hTag = '[prek=0.5][k=-0.5][m][mv]〝[/mv][/m][/k][/prek]';
+
                 targetIndices.forEach(idx => {
                     const r = regions[idx];
                     if (!r) return;
 
-                    // 智能切换：只要包含 h 就是横排 -> 变竖排；否则变横排
+                    // 执行方向切换
                     let currentDir = String(r.direction || 'v').toLowerCase();
                     r.direction = currentDir.includes('h') ? 'v' : 'h';
+
+                    // --- 核心修复：自动替换文本内容 ---
+                    if (r.translation) {
+                        if (r.direction === 'h') {
+                            // 刚刚切到横排：把文本里所有的竖排标签换成横排标签
+                            r.translation = r.translation.split(vTag).join(hTag);
+                        } else {
+                            // 刚刚切到竖排：把文本里所有的横排标签换成竖排标签
+                            r.translation = r.translation.split(hTag).join(vTag);
+                        }
+
+                        // 如果当前正在编辑这个框，同步更新左侧编辑区域的文字
+                        if (idx === activeRegionIndex) {
+                            document.getElementById('transEditArea').value = r.translation.replace(/【BR】/g, '\n');
+                        }
+                    }
                 });
 
-                // UI 反馈：闪烁提示修改成功
+                // UI 反馈
                 const firstDir = regions[targetIndices[0]].direction;
                 editPropBtnRight.innerText = (firstDir === 'v' ? "竖" : "横");
                 editPropBtnRight.classList.add('text-blue-400', 'border-blue-400');
@@ -2030,37 +2587,55 @@
                     editPropBtnRight.classList.remove('text-blue-400', 'border-blue-400');
                 }, 800);
 
-                draw(); // 立即重绘
-            } 
-            // 3. 既没多选也没单选，才弹出全局菜单
-            else {
+                draw(); 
+            } else {
                 const dialog = document.getElementById('dirScopeDialog');
-                if (dialog) {
-                    dialog.classList.remove('hidden');
-                } else {
-                    alert("请先选择文本框，或通过全局菜单操作。");
-                }
+                if (dialog) dialog.classList.remove('hidden');
             }
         };
 
         // 执行全局方向修改
+        // 升级后的全局方向修改函数：同步重构所有特殊符号
         window.executeGlobalDir = function(mode) {
+            // 定义特征标签
+            const vTag = '[prek=0.25][k=-0.5][m][mv]〝[/mv][/m][/k][/prek]';
+            const hTag = '[prek=0.5][k=-0.5][m][mv]〝[/mv][/m][/k][/prek]';
+
             const process = (targetRegions) => {
                 targetRegions.forEach(r => {
+                    const oldDir = r.direction || 'v'; // 记录旧方向
+
+                    // 执行方向变更
                     if (mode === 'auto') {
-                        r.direction = detectDirectionByRatio(r);
+                        r.direction = detectDirectionByRatio(r); // 智能判定
                     } else {
                         r.direction = mode;
+                    }
+
+                    // --- 核心修复：如果方向发生了实质变化，自动重构翻译文本 ---
+                    if (r.translation && oldDir !== r.direction) {
+                        if (r.direction === 'h') {
+                            // 变为横排：全量替换为横排标签
+                            r.translation = r.translation.split(vTag).join(hTag);
+                        } else {
+                            // 变为竖排：全量替换为竖排标签
+                            r.translation = r.translation.split(hTag).join(vTag);
+                        }
                     }
                 });
             };
 
-            // 1. 处理当前页
+            // 1. 处理当前页面的区域
             process(regions);
             
-            // 2. 批量处理内存
+            // 2. 处理内存中全书所有页面的数据
             if (matchedFiles && matchedFiles.length > 0) {
                 matchedFiles.forEach(file => process(file.regions));
+            }
+
+            // 3. 重要：如果当前正在编辑某个框，立刻同步刷新左侧编辑区的内容
+            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
+                document.getElementById('transEditArea').value = regions[activeRegionIndex].translation.replace(/【BR】/g, '\n');
             }
             
             closeDirDialog();
@@ -2105,7 +2680,7 @@
             const styleStack = [{ 
                 bold: false, italic: false, tcy: false, dot: false, 
                 scale: 1.0, font: null, ruby: null, rotation: 0,
-                kerning: 0, offX: 0, offY: 0, vShear: 0,
+                kerning: 0, offX: 0, offY: 0, vShear: 0, preKerning: 0, // [新增] 初始前间距为 0
                 mirror: false,  // 水平翻转
                 mirrorV: false  // 新增：竖向翻转
             }];
@@ -2144,6 +2719,10 @@
                         else if (tagName === 'r' && param) currentStyle.ruby = param;
                         else if (tagName === 'rot' && param) currentStyle.rotation = parseFloat(param) || 0;
                         else if (tagName === 'k' && param) currentStyle.kerning = parseFloat(param) || 0;
+                        // 2. 在 tagName 判断逻辑中（约 770 行附近）添加解析
+                        else if (tagName === 'prek' && param) {
+                            currentStyle.preKerning = parseFloat(param) || 0;
+                        }
                         else if (tagName === 'x' && param) currentStyle.offX = parseFloat(param) || 0;
                         else if (tagName === 'y' && param) currentStyle.offY = parseFloat(param) || 0;
                         // [新增] 垂直切变解析
@@ -2510,24 +3089,24 @@
                 comparisonRawImg.style.transform = transformStr;
             }
         }
-
-        fontSelect.addEventListener('change', (e) => {
-            const val = e.target.value;
-            
-            if (val === 'custom') { 
-                customFontInput.classList.remove('hidden'); 
-                customFontInput.focus(); 
-            } else { 
-                customFontInput.classList.add('hidden'); 
+        if (fontSelect) {
+            fontSelect.addEventListener('change', (e) => {
+                const val = e.target.value;
                 
-                // 直接交给 batchUpdateProp，它会自动检查：
-                // 1. 是否有多选 (selectedRegions)？有就全改。
-                // 2. 没有多选，是否有单选 (activeRegionIndex)？有就改单体。
-                // 3. 都没有，才改全局 (activeFontFamily)。
-                batchUpdateProp('fontFamily', val);
-            }
-        });
-
+                if (val === 'custom') { 
+                    customFontInput.classList.remove('hidden'); 
+                    customFontInput.focus(); 
+                } else { 
+                    customFontInput.classList.add('hidden'); 
+                    
+                    // 直接交给 batchUpdateProp，它会自动检查：
+                    // 1. 是否有多选 (selectedRegions)？有就全改。
+                    // 2. 没有多选，是否有单选 (activeRegionIndex)？有就改单体。
+                    // 3. 都没有，才改全局 (activeFontFamily)。
+                    batchUpdateProp('fontFamily', val);
+                }
+            });
+        }
         customFontInput.addEventListener('input', (e) => { 
             const val = `"${e.target.value}", sans-serif`;
             
@@ -2673,7 +3252,7 @@
                 try {
                     const buffer = await file.arrayBuffer();
                     // 基于当前已加载数量生成唯一标识
-                    const fontName = `MyFont_${loadedCustomFonts.length + 1}`;
+                    const fontName = file.name.split('.')[0];
                     const fontFace = new FontFace(fontName, buffer);
                     
                     await fontFace.load(); 
@@ -2694,14 +3273,13 @@
                 }
             }
 
-            // 4. 完成后的反馈
-            if (successCount > 0) {
-                console.log(`成功批量加载 ${successCount} 个字体。`);
-                alert(`已成功加载 ${successCount} 个字体文件！\n请在下拉菜单中手动选择应用。`);
-            }
+            // 【关键修复】：确保所有字体加载并存入 select 后再刷新
+            setTimeout(() => {
+                window.refreshFontPickerList();
+            }, 100);
 
-            loadingMask.style.display = 'none'; 
-            e.target.value = ''; // 清空 input 以便下次再次导入同名文件
+            loadingMask.style.display = 'none';
+            e.target.value = '';
         }
 
         function handleJsonUpload(e) {
@@ -2921,7 +3499,35 @@
 
         function onMouseDown(e) {
             const pos = getMousePos(e); 
+            // --- 新增：高级工具拦截 ---
+            if (currentAdvTool !== 'none') {
+                isAdvDragging = true;
+                dragStartPos = pos; // 记录起点（物理坐标）
 
+                if (currentAdvTool === 'picker') {
+                    // 吸管工具：直接采样并更新
+                    const pixel = mainCanvasCtx.getImageData(e.offsetX, e.offsetY, 1, 1).data;
+                    const hex = "#" + ((1 << 24) + (pixel[0] << 16) + (pixel[1] << 8) + pixel[2]).toString(16).slice(1);
+                    activePaintColor = hex;
+                    document.getElementById('paintColorBtn').style.backgroundColor = hex;
+                    setAdvTool('none'); // 吸完自动退出
+                    return;
+                }
+
+                if (currentAdvTool === 'clone' && e.altKey) {
+                    // 仿制图章：Alt+左键 记录采样源
+                    cloneSource = { x: pos.x, y: pos.y };
+                    showStatusMsg("已设置采样源点");
+                    return;
+                }
+
+                if (currentAdvTool === 'line' || currentAdvTool === 'lasso') {
+                    pathPoints = [pos]; // 初始化轨迹
+                }
+                
+                // 如果是绘图工具，拦截后续的区域选择逻辑
+                if (currentAdvTool !== 'none') return;
+            }
             // --- 1. 空格键优先级最高：强制进入平移模式 ---
             if (e.button === 0 && isSpacePressed) {
                 viewState.isPanning = true; 
@@ -3141,7 +3747,43 @@
         function onMouseMove(e) {
             const pos = getMousePos(e);
             let cursor = 'default';
+            // --- 新增：高级工具过程处理 ---
+            if (currentAdvTool !== 'none' && isAdvDragging) {
+                
+                if (currentAdvTool === 'line' && isAdvDragging) {
+                    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+                    uiCtx.save();
+                    const s = toScreen(dragStartPos);
+                    const ePos = toScreen(pos);
+                    
+                    uiCtx.beginPath();
+                    uiCtx.moveTo(s.x, s.y);
+                    uiCtx.lineTo(ePos.x, ePos.y);
+                    uiCtx.strokeStyle = activePaintColor;
+                    
+                    // --- 修正：宽度 = 半径 * 2 ---
+                    uiCtx.lineWidth = maskBrushSize * 2; 
+                    
+                    uiCtx.lineCap = 'round';
+                    uiCtx.stroke();
+                    uiCtx.restore();
+                    return; 
+                }
 
+                if (currentAdvTool === 'clone' && !e.altKey && cloneSource) {
+                    // 实时仿制绘画
+                    handleCloneStamp(pos);
+                    isCanvasDirty = true;
+                    return;
+                }
+                
+                if (currentAdvTool === 'lasso') {
+                    pathPoints.push(pos);
+                    // 这里可以画一段临时的折线预览
+                }
+                
+                return; // 拦截原有逻辑
+            }
             // 1. 如果正在涂抹（右键/中键已按下），保持拦截
             if (isMaskDragging) {
                 if (comboMode) {
@@ -3156,13 +3798,15 @@
             }
 
             // 如果是混合模式，也需要记录鼠标位置并渲染 UI 圆圈
-            // --- 【核心修改点】 ---
-            // 只有在“既没在拖框”又“没在平移”的情况下，才显示笔刷 UI 并拦截后续逻辑
-            if ((maskEditMode !== 'none' || paintMode !== 'none' || comboMode) && !transformState.dragging) {
+            // --- 修改后 ---
+            // 只有在“既没在拖框”又“没在平移”的情况下，才拦截并显示笔刷 UI
+            if (!transformState.dragging && !viewState.isPanning && 
+                (maskEditMode !== 'none' || paintMode !== 'none' || comboMode || currentAdvTool !== 'none')) {
+                
                 mainCanvas.style.cursor = 'crosshair';
                 currentMousePos = pos; 
                 renderUI(); 
-                return; // 只有不拖拽时才拦截，这样下方的 transformState.dragging 逻辑就能跑到了
+                return; // 只有在纯“悬停”预览时才拦截
             }
 
             if (isDrawingMode && drawStartPos) {
@@ -3432,7 +4076,42 @@
         });
 
 
-        function onMouseUp() {
+        function onMouseUp(e) {
+            if (currentAdvTool !== 'none' && isAdvDragging) {
+                // 获取当前坐标
+                const pos = getMousePos(e); 
+
+                if (currentAdvTool === 'line') {
+                    // 1. 物理层绘画：线画在 paintCanvas 上
+                    paintCtx.save();
+                    paintCtx.beginPath();
+                    paintCtx.moveTo(dragStartPos.x, dragStartPos.y);
+                    paintCtx.lineTo(pos.x, pos.y);
+                    paintCtx.strokeStyle = activePaintColor;
+                    paintCtx.lineWidth = maskBrushSize * 2 / viewState.scale; 
+                    paintCtx.lineCap = 'round';
+                    paintCtx.stroke();
+                    paintCtx.restore();
+
+                    // 2. 清理 UI 预览层
+                    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+
+                    // 3. 持久化数据
+                    isCanvasDirty = true;
+                    persistCanvasData(); // 这里已经保存了所有数据
+                } 
+                else {
+                    // 如果是其他高级工具（如仿制图章、套索等）
+                    // 如果它们没有自己的 persist 逻辑，则统一同步一次蒙版
+                    syncMaskData();
+                }
+                
+                // 【关键】所有逻辑跑完后，最后再关闭拖拽开关
+                isAdvDragging = false; 
+                draw(); 
+                return;
+            }
+
             // --- 新增：停止蒙版涂抹 ---
             if (isMaskDragging) {
                 isMaskDragging = false;
@@ -3595,10 +4274,32 @@
 
             // 4. 绘制涂鸦层 (Paint Layer)
             if (paintCanvas.width > 0) {
-                ctx.save(); // 保存当前状态
-                ctx.globalAlpha = paintOpacity; // 设置涂鸦层透明度
+                ctx.save();
+                ctx.globalAlpha = paintOpacity; 
                 ctx.drawImage(paintCanvas, 0, 0);
-                ctx.restore(); // 恢复状态，确保不影响后续的文字层绘制
+                ctx.restore();
+
+                // --- [核心新增] 蓝色遮罩可视化层 ---
+                if (showPaintMask) {
+                    ctx.save();
+                    ctx.globalAlpha = 0.3; // 遮罩不透明度，与显蒙保持一致
+                    
+                    // 创建临时画布用于合成蓝色遮罩
+                    const paintOverlay = document.createElement('canvas');
+                    paintOverlay.width = paintCanvas.width; 
+                    paintOverlay.height = paintCanvas.height;
+                    const poCtx = paintOverlay.getContext('2d');
+                    
+                    poCtx.fillStyle = '#0000ff'; // 纯蓝
+                    poCtx.fillRect(0, 0, paintOverlay.width, paintOverlay.height);
+                    
+                    // 关键：只在有涂鸦像素的地方显示蓝色
+                    poCtx.globalCompositeOperation = 'destination-in';
+                    poCtx.drawImage(paintCanvas, 0, 0);
+                    
+                    ctx.drawImage(paintOverlay, 0, 0);
+                    ctx.restore();
+                }
             }
 
             // --- 【新增：文字层控制】 ---
@@ -3608,7 +4309,8 @@
                 // 修改：让对比模式也执行译文渲染逻辑
                 if(displayMode === 'translation' || displayMode === 'comparison') {
                     // 严格按汉堡包顺序绘制：底层发光 -> 中层描边 -> 顶层填充
-                    regions.forEach(r => drawSmartTranslation(r, 'glow'));   
+                    regions.forEach(r => drawSmartTranslation(r, 'glow'));
+                    regions.forEach(r => drawSmartTranslation(r, 'outer-stroke')); // 关键：新增这一行
                     regions.forEach(r => drawSmartTranslation(r, 'stroke'));
                     regions.forEach(r => drawSmartTranslation(r, 'fill'));
                 } else {
@@ -3871,7 +4573,8 @@
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
 
             // [修改] 增加 comboMode 的判定，确保混合模式下也显示圆圈
-            if (maskEditMode === 'none' && paintMode === 'none' && !comboMode) return;
+            // 修改：只要 蒙版、涂鸦、混合模式 或 高级工具 任何一个开启，就显示圆圈
+            if (maskEditMode === 'none' && paintMode === 'none' && !comboMode && currentAdvTool === 'none') return;
 
             if (e) {
                 const rect = uiCanvas.getBoundingClientRect();
@@ -4016,6 +4719,7 @@
         function drawSmartTranslation(region, onlyPass, targetCtx = ctx) {
             // --- [性能防弹衣：逻辑截断] ---
             const isGlow = onlyPass === 'glow';
+            const isOuterStroke = onlyPass === 'outer-stroke';
             const isStroke = onlyPass === 'stroke';
             const isInteracting = transformState.dragging || viewState.isPanning; // 是否正在交互
 
@@ -4403,11 +5107,20 @@
             // --- 核心修复版：支持两层高斯模糊与动态字号适配 ---
             function renderPass(mode) {
                 const isGlow = mode === 'glow';
+                const isOuterStroke = mode === 'outer-stroke'; // [新增]
                 const isStroke = mode === 'stroke';
                 const isFill = mode === 'fill';
+                // 在 renderPass 内部定义变量
+                const useOuterConcentricFill = region.outer_fill_holes === true;
+
 
                 if (isGlow && !region.blurEnable) return;
+                if (isOuterStroke) {
+                    const enabled = (region.outerStrokeEnable !== undefined) ? region.outerStrokeEnable : activeOuterStrokeEnabled;
+                    if (!enabled) return;
+                }
                 if (isStroke && (!isRegionStrokeEnabled || finalStrokeWidthRatio <= 0)) return;
+                // 判断开关
 
                 targetCtx.save();
 
@@ -4436,6 +5149,8 @@
                     const blurRatio = region.blurSizeRatio || 0.1;
                     const blurPx = currentFs * blurRatio; 
 
+                    
+
                     if (isGlow) {
                         targetCtx.save();
                         targetCtx.filter = `blur(${blurPx}px)`; 
@@ -4450,7 +5165,30 @@
                             targetCtx.stroke();
                         }
                         targetCtx.restore();
-                    } 
+                    }
+                    else if (isOuterStroke) {
+                        targetCtx.save();
+                        targetCtx.filter = 'none'; // 外描边通常不带模糊，保持锐利
+                        targetCtx.strokeStyle = region.outerStrokeColor || activeOuterStrokeColor;
+                        
+                        // 获取外描边的总宽度（倍率 * 字号）
+                        const maxW = currentFs * (region.outerStrokeWidthRatio !== undefined ? region.outerStrokeWidthRatio : activeOuterStrokeWidth);
+
+                        if (useOuterConcentricFill) {
+                            // --- 填孔模式：由粗到细多次叠加 ---
+                            const step = Math.max(0.5, currentFs * 0.05); // 设置步进，确保覆盖严密
+                            for (let w = maxW; w > 0; w -= step) {
+                                targetCtx.lineWidth = w;
+                                targetCtx.strokeText(char, rdx, rdy);
+                            }
+                        } else {
+                            // --- 普通模式：直接画一层 ---
+                            targetCtx.lineWidth = maxW;
+                            targetCtx.strokeText(char, rdx, rdy);
+                        }
+                        
+                        targetCtx.restore();
+                    }
                     else if (isStroke) {
                         targetCtx.save();
                         targetCtx.filter = 'none';
@@ -4644,6 +5382,27 @@
                                         targetCtx.lineWidth = m.fSize * 0.1 + (blurPx * 2); 
                                         targetCtx.strokeText(m.char, 0, 0);
                                     } 
+                                    // --- 新增：外描边分支 ---(在 tok.isGroup 循环内部)
+                                    else if (isOuterStroke) {
+                                        targetCtx.filter = 'none';
+                                        targetCtx.strokeStyle = region.outerStrokeColor || activeOuterStrokeColor;
+                                        
+                                        // 计算总宽度
+                                        const maxW = m.fSize * (region.outerStrokeWidthRatio !== undefined ? region.outerStrokeWidthRatio : activeOuterStrokeWidth);
+
+                                        // 【修复核心】：同步“外填孔”逻辑到 TCY 块
+                                        if (region.outer_fill_holes === true) {
+                                            const step = Math.max(0.5, m.fSize * 0.05);
+                                            for (let w = maxW; w > 0; w -= step) {
+                                                targetCtx.lineWidth = w;
+                                                targetCtx.strokeText(m.char, 0, 0);
+                                            }
+                                        } else {
+                                            targetCtx.lineWidth = maxW;
+                                            targetCtx.strokeText(m.char, 0, 0);
+                                        }
+                                    }
+                                    // ----------------------
                                     else if (isStroke) {
                                         targetCtx.filter = 'none';
                                         targetCtx.strokeStyle = finalStrokeColor;
@@ -4710,7 +5469,11 @@
                                     }
                                     
                                     const spacing = letterSpacingPx + (style.kerning || 0) * fSize;
-                                    charHeights.push({ h: h, spacing: spacing, char: char, isSymmetric: isSymmetric });
+                                    // 在 charHeights.push 之前计算前间距
+                                    const preSpacing = (style.preKerning || 0) * fSize; // 计算前间距像素值
+                                    h += preSpacing; // 将前间距计入总高度，否则居中对齐会歪
+
+                                    charHeights.push({ h: h, spacing: spacing, preSpacing: preSpacing, char: char, isSymmetric: isSymmetric });
                                 }
 
                                 // === 2. Ruby 逻辑 (自动适配压缩高度) ===
@@ -4785,7 +5548,8 @@
                                 charHeights.forEach(item => {
                                     const char = item.char; 
                                     const charH = item.h; 
-                                    
+                                    // [新增] 在绘制字符前，先让坐标向下移动“前间距”的距离
+                                    currentY += item.preSpacing;
                                     // --- A. 贴边对齐计算 (Alignment Logic) ---
                                     let charCenterY = currentY + charH / 2;
                                     const alignDist = (fSize - charH) / 2;
@@ -4953,6 +5717,7 @@
 
                                 const cW = targetCtx.measureText(char).width; 
                                 const spacing = letterSpacingPx + (tok.style.kerning || 0) * fSize;
+
                                 
                                 isSymmetric = false;
 
@@ -4968,12 +5733,12 @@
                                     visualWidth = targetCtx.measureText(char).width;
                                 }
 
-
+                                const preSpacing = (tok.style.preKerning || 0) * fSize;
                                 const advance = visualWidth + spacing;
                                 w += advance;
 
                                 tok.charDetails.push({ 
-                                    char, originalWidth: cW, visualWidth, advance, spacing, isSymmetric 
+                                    char, originalWidth: cW, visualWidth, advance, spacing, isSymmetric, preSpacing // 存入详情
                                 });
                             }
                             if (tok.charDetails.length > 0) w -= (letterSpacingPx + (tok.style.kerning || 0) * fSize);
@@ -5056,6 +5821,10 @@
                             if (tok.charDetails) {
                                 tok.charDetails.forEach(item => {
                                     const char = item.char;
+
+                                    // [新增] 在确定槽位中心前，先让坐标向右移动“前间距”
+                                    currentX += item.preSpacing;
+
                                     const slotWidth = item.visualWidth;
                                     let drawCenterX = currentX + slotWidth / 2; // 默认槽位中心
                                     let drawX = 0;
@@ -5149,10 +5918,12 @@
             // if (!onlyPass || onlyPass === 'fill') renderPass('fill');
 
             // 修改后：严格的汉堡包叠加顺序
+            // 修改后的顺序
             if (!onlyPass) {
-                renderPass('glow');   // 最底层：发光
-                renderPass('stroke'); // 中间层：描边
-                renderPass('fill');   // 最上层：填充（确保文字清晰）
+                renderPass('glow');         // 最底层：发光
+                renderPass('outer-stroke'); // [新增] 第二层：外描边
+                renderPass('stroke');       // 第三层：常规描边
+                renderPass('fill');         // 最顶层：字体填充
             } else {
                 renderPass(onlyPass);
             }
@@ -6641,17 +7412,14 @@ ctx.translate(0, Math.round(charY));
             if (maskEditMode !== 'none' || paintMode !== 'none' || comboMode) {
                 if (e.key === '<' || e.key === ',') { 
                     maskBrushSize = Math.max(1, maskBrushSize - 1);
-                    // 如果你有笔触大小的显示框，同步更新它
-                    const sizeInput = document.getElementById('brushSizeInput');
-                    if(sizeInput) sizeInput.value = maskBrushSize;
-                    renderUI(); // 新增
-                    return; // 处理完就返回，避免干扰其他逻辑
+                    syncBrushSizeUI(); // 新增：同步 UI
+                    renderUI(); 
+                    return;
                 }
                 if (e.key === '>' || e.key === '.') {
                     maskBrushSize = Math.min(200, maskBrushSize + 1);
-                    const sizeInput = document.getElementById('brushSizeInput');
-                    if(sizeInput) sizeInput.value = maskBrushSize;
-                    renderUI(); // 新增
+                    syncBrushSizeUI(); // 新增：同步 UI
+                    renderUI();
                     return;
                 }
             }
@@ -6715,45 +7483,33 @@ ctx.translate(0, Math.round(charY));
         * 自动检测并列出系统字体
         */
         async function detectSystemFonts() {
-            // 检查浏览器是否支持该 API (目前 Chrome, Edge 支持)
             if (!('queryLocalFonts' in window)) {
-                alert("当前浏览器不支持自动检测系统字体，请尝试使用 Chrome 或 Edge。");
+                alert("浏览器不支持此功能，请使用 Chrome 或 Edge");
                 return;
             }
 
             try {
-                // 请求权限并获取字体列表
                 const fonts = await window.queryLocalFonts();
-                const fontSelect = document.getElementById('fontSelect');
+                const fontSelect = document.getElementById('fontSelect'); // 必须保留这个隐藏的数据库
+                if (!fontSelect) return;
 
-                // 使用 Set 去重，因为一个字体家族通常包含很多变体 (Bold, Italic 等)
                 const families = [...new Set(fonts.map(f => f.family))].sort();
-
-                // 创建一个分组并添加到下拉框
                 const group = document.createElement('optgroup');
-                group.label = "--- 系统发现的字体 ---";
+                group.label = "--- 系统字体 ---";
 
                 families.forEach(family => {
                     const option = document.createElement('option');
-                    // 格式化为 CSS 属性值
                     option.value = `"${family}", sans-serif`;
                     option.textContent = family;
                     group.appendChild(option);
                 });
 
                 fontSelect.appendChild(group);
-                
-                // 视觉反馈
-                const btn = event.currentTarget;
-                btn.innerText = "OK";
-                btn.classList.replace('bg-blue-600', 'bg-green-600');
+                // 【关键】删掉原有的 const btn = event.currentTarget; 这一行，不再处理按钮样式[cite: 1]
                 console.log(`成功载入 ${families.length} 个系统字体`);
 
             } catch (err) {
                 console.error("检测字体失败:", err);
-                if (err.name === 'NotAllowedError') {
-                    alert("用户拒绝了字体访问权限。");
-                }
             }
         }
 
@@ -6830,22 +7586,44 @@ ctx.translate(0, Math.round(charY));
             // 原文框：数组转多行
             document.getElementById('origEditArea').value = (r.texts || []).join('\n');
 
+            // 同步外描边 UI
+            const osEnable = document.getElementById('outerStrokeEnable');
+            osEnable.checked = (r.outerStrokeEnable !== undefined) ? r.outerStrokeEnable : activeOuterStrokeEnabled;
+            
+            const osWidth = document.getElementById('outerStrokeWidthInput');
+            osWidth.value = (r.outerStrokeWidthRatio !== undefined) ? r.outerStrokeWidthRatio : activeOuterStrokeWidth;
+            
+            const osColorBtn = document.getElementById('btnOuterStrokeColor');
+            osColorBtn.style.backgroundColor = r.outerStrokeColor || activeOuterStrokeColor;
+            // [新增] 同步外描边填孔开关状态
+            document.getElementById('outerFillHolesCb').checked = !!r.outer_fill_holes;
 
             // --- 核心修复：选中单框时同步字体显示 ---
-            const currentFont = r.fontFamily || activeFontFamily; // 优先取单框字体，否则取全局
-            
-            // 1. 尝试直接匹配下拉菜单的值
-            fontSelect.value = currentFont;
+            const currentFont = r.fontFamily || activeFontFamily; 
+            const currentFontBtn = document.getElementById('currentFontBtn');
+            let matchedOptionText = null;
 
-            // 2. 如果下拉菜单中没有这个选项（说明是自定义输入的或手动加载的字体）
-            if (fontSelect.value !== currentFont && currentFont) {
+            // 1. 在隐藏的 select 中寻找对应的中文/显示名称
+            Array.from(fontSelect.options).forEach(opt => {
+                if (opt.value === currentFont) matchedOptionText = opt.text;
+            });
+
+            if (matchedOptionText) {
+                fontSelect.value = currentFont;
+                customFontInput.classList.add('hidden');
+                if (currentFontBtn) currentFontBtn.innerText = matchedOptionText; // 同步名称到顶栏按钮
+            } else if (currentFont) {
                 fontSelect.value = 'custom';
                 customFontInput.classList.remove('hidden');
-                // 还原显示名称，去掉引号和 fallback 
-                customFontInput.value = currentFont.replace(/"/g, '').replace(/, sans-serif/g, '');
-            } else {
-                // 如果匹配成功或是标准字体，隐藏自定义输入框
-                customFontInput.classList.add('hidden');
+                const cleanFontName = currentFont.replace(/"/g, '').replace(/, sans-serif/g, '').replace(/, serif/g, '');
+                customFontInput.value = cleanFontName;
+                if (currentFontBtn) currentFontBtn.innerText = cleanFontName; // 同步自定义名称到顶栏按钮[cite: 1]
+            }
+
+            // 联动：如果字体面板开着，切换框时也顺便刷新里面的高亮状态[cite: 1]
+            const dialog = document.getElementById('fontPickerDialog');
+            if (dialog && !dialog.classList.contains('hidden')) {
+                window.refreshFontPickerList();
             }
 
             // --- D. 同步其他属性 (字号、字体等) ---
@@ -6878,46 +7656,56 @@ ctx.translate(0, Math.round(charY));
             activeRegionIndex = -1;
 
             const container = document.getElementById('editorContainer');
+            container.style.opacity = '0.5'; 
+            container.style.pointerEvents = 'auto'; 
             
-            // --- 核心修改：不要使用 none，改用 auto 确保临时文本框可用 ---
-            container.style.opacity = '0.5';          // 变淡提示未选中
-            container.style.pointerEvents = 'auto';   // 必须是 auto，否则点不动编辑框
-            sidebarStatus.innerText = "未选择区域";
-
             sidebarStatus.innerHTML = `<span class="text-blue-400">全局样式模式</span>`;
-            // 只清空属于区域的编辑框，不要禁用整个容器
             transEditArea.value = '';
             origEditArea.value = '';
 
-            // --- 核心修复：还原字体下拉菜单显示 ---
-            // 将下拉框的值设回全局默认字体
+            // [新增] 重置外描边填孔开关
+            document.getElementById('outerFillHolesCb').checked = false;
+
+            // --- 核心修复：还原顶栏按钮的字体显示为全局字体 ---
+            const currentFontBtn = document.getElementById('currentFontBtn');
             if (activeFontFamily) {
                 fontSelect.value = activeFontFamily;
+                
+                // 查找全局字体对应的显示名称
+                let matchedOptionText = "未知字体";
+                Array.from(fontSelect.options).forEach(opt => {
+                    if (opt.value === activeFontFamily) matchedOptionText = opt.text;
+                });
+                
+                // 更新顶栏文字
+                if (currentFontBtn) currentFontBtn.innerText = matchedOptionText;
             }
 
-            // 顺便处理自定义字体输入框的显示/隐藏
+            // 处理自定义输入框的显示
             if (activeFontFamily !== 'custom') {
                 customFontInput.classList.add('hidden');
             }
 
-            // --- [新增] 取消选中时，填孔开关默认关掉 ---
+            // --- 联动刷新：如果字体面板开着，也要把高亮切回全局字体 ---[cite: 1]
+            const dialog = document.getElementById('fontPickerDialog');
+            if (dialog && !dialog.classList.contains('hidden')) {
+                window.refreshFontPickerList();
+            }
+
+            // 其余原有的重置逻辑[cite: 1]
             fillHolesCb.checked = false;
-            
-            // --- 新增：重置“属”按钮状态 ---
             const propBtn = document.getElementById('editPropBtnRight');
-            propBtn.innerText = "属"; 
-            propBtn.classList.remove('text-blue-400', 'border-blue-500/50');
+            if (propBtn) {
+                propBtn.innerText = "属"; 
+                propBtn.classList.remove('text-blue-400', 'border-blue-500/50');
+            }
 
-            // 确保 resetSidebar 也是这样写的：
             document.getElementById('punctAlignSelect').value = activePunctAlign || 'half';
-
-            // 填入当前的全局基准值
             lineSpacingInput.value = activeLineSpacing.toFixed(2);
             letterSpacingInput.value = activeLetterSpacing.toFixed(2);
-            // --- 新增：还原对齐方式和字重的 UI 显示 ---
-            textAlignSelect.value = activeTextAlign;   // 还原为全局对齐方式
-            fontWeightSelect.value = activeFontWeight; // 还原为全局默认字重
-            // 调用你刚才改好的那个函数
+            textAlignSelect.value = activeTextAlign;   
+            fontWeightSelect.value = activeFontWeight; 
+            
             disableControls(); 
             updateColorSwatches();
         }
@@ -6954,6 +7742,7 @@ ctx.translate(0, Math.round(charY));
         document.getElementById('maskBrushBtn').onclick = function() {
             const isActive = (maskEditMode === 'brush'); // 记录点击前的状态
             clearAllTools(); // 先清空
+            deactivateAllTools(); // 第一步：关掉所有其他工具（包括高级工具）
             if (!isActive) {
                 maskEditMode = 'brush';
                 showMask = true; // 自动开启显蒙
@@ -6967,6 +7756,7 @@ ctx.translate(0, Math.round(charY));
         document.getElementById('maskEraserBtn').onclick = function() {
             const isActive = (maskEditMode === 'eraser');
             clearAllTools();
+            deactivateAllTools(); // 第一步：关掉所有其他工具（包括高级工具）
             if (!isActive) {
                 maskEditMode = 'eraser';
                 showMask = true; 
@@ -6980,6 +7770,7 @@ ctx.translate(0, Math.round(charY));
         document.getElementById('paintBrushBtn').onclick = function() {
             const isActive = (paintMode === 'brush');
             clearAllTools();
+            deactivateAllTools(); // 第一步：关掉所有其他工具（包括高级工具）
             if (!isActive) {
                 paintMode = 'brush';
                 this.classList.add('mask-active');
@@ -6991,6 +7782,7 @@ ctx.translate(0, Math.round(charY));
         document.getElementById('paintEraserBtn').onclick = function() {
             const isActive = (paintMode === 'eraser');
             clearAllTools();
+            deactivateAllTools(); // 第一步：关掉所有其他工具（包括高级工具）
             if (!isActive) {
                 paintMode = 'eraser';
                 this.classList.add('mask-active');
@@ -7002,6 +7794,7 @@ ctx.translate(0, Math.round(charY));
         document.getElementById('comboModeBtn').onclick = function() {
             const isActive = comboMode;
             clearAllTools();
+            deactivateAllTools(); // 第一步：关掉所有其他工具（包括高级工具）
             if (!isActive) {
                 comboMode = true;
                 showMask = true; // 混合模式通常涉及蒙版，建议自动显蒙
