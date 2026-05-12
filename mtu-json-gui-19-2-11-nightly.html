@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v19.2.10)</title>
+    <title>MTU 嵌字编辑器 (v19.2.11)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -380,7 +380,7 @@
                         检
                     </button>
                     <label class="bg-purple-600 hover:bg-purple-500 text-white text-[10px] rounded px-2 flex items-center cursor-pointer" title="加载本地字体文件，可多选支持.ttf .otf .woff">
-                        <span>+</span><input type="file" id="fontFileInput" accept=".ttf,.otf,.woff" class="hidden" multiple>
+                        <span>+</span><input type="file" id="fontFileInput" accept=".ttf,.otf,.woff,.ttc" class="hidden" multiple>
                     </label>
                 </div>
             </div>
@@ -3240,30 +3240,27 @@
         }
 
         async function handleFontFileUpload(e) {
-            // 1. 获取所有选中的文件并转为数组
             const files = Array.from(e.target.files); 
             if (files.length === 0) return;
 
             loadingMask.style.display = 'flex';
             let successCount = 0;
 
-            // 2. 使用 for...of 循环逐个处理
             for (const file of files) {
                 try {
                     const buffer = await file.arrayBuffer();
-                    // 基于当前已加载数量生成唯一标识
                     const fontName = file.name.split('.')[0];
+                    
+                    // FontFace API 能够识别并加载 .ttc 中的默认字体
                     const fontFace = new FontFace(fontName, buffer);
                     
                     await fontFace.load(); 
                     document.fonts.add(fontFace);
 
-                    // 3. 创建新选项并存入下拉菜单
                     const option = document.createElement('option'); 
                     option.value = `"${fontName}", sans-serif`; 
                     option.text = `📂 ${file.name}`;
                     
-                    // 始终插入在“手动...”选项之后（索引1）
                     fontSelect.add(option, 1); 
                     loadedCustomFonts.push(fontName);
                     successCount++;
