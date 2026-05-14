@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v19.0.17.5)</title>
+    <title>MTU 嵌字编辑器 (v19.0.17.7)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -2861,9 +2861,21 @@
                         // 【核心新增】：导入时立即对字号取整
                         r.font_size = Math.round(r.font_size || 20);
 
-                        r.line_spacing = 1.2;
-                        r.letter_spacing = 0;
+                        // --- 修改开始：条件判定逻辑 ---
+                        // 检查是否存在带后缀的参数
+                        if (r.line_spacing_mtu !== undefined) {
+                            r.line_spacing = r.line_spacing_mtu;
+                        } else {
+                            // 原始导入，应用默认值
+                            r.line_spacing = 1.2;
+                        }
 
+                        if (r.letter_spacing_mtu !== undefined) {
+                            r.letter_spacing = r.letter_spacing_mtu;
+                        } else {
+                            // 原始导入，应用默认值
+                            r.letter_spacing = 0;
+                        }
                         // 【核心修复】：如果 JSON 里已经有了 box 和 angle，直接信任它们，不要重新计算
                         if (r.box && Array.isArray(r.box) && r.box.length === 4 && r.angle !== undefined) {
                             console.log("单文件导入：检测到精修坐标，保持解耦状态。");
@@ -5766,10 +5778,21 @@ ctx.translate(0, Math.round(charY));
                                 if (r.direction === 'horizontal') r.direction = 'h';
                                 r.font_size = Math.round(r.font_size || 20);
                                 
+                                // --- 修改开始：同步判定逻辑 ---
+                                r.line_spacing = r.line_spacing_mtu !== undefined ? r.line_spacing_mtu : 1.2;
+                                r.letter_spacing = r.letter_spacing_mtu !== undefined ? r.letter_spacing_mtu : 0;
+                                // --- 修改结束 ---
+
                                 const finalFg = r.fg_colors || r.font_color;
                                 if (finalFg) r.parsedColor = parseColor(finalFg);
 
-                                // 坐标还原逻辑
+                                if (r.parsedColor && isNearWhite(colorToHex(r.parsedColor))) {
+                                    if (!r.strokeColor || r.strokeColor === 'none') {
+                                        r.strokeColor = "#000000"; 
+                                        if (r.strokeWidthRatio === undefined || r.strokeWidthRatio === 0) r.strokeWidthRatio = 0.2;
+                                    }
+                                }
+
                                 if (r.box && Array.isArray(r.box) && r.angle !== undefined) {
                                     // 保持精修坐标
                                 } else {
@@ -5778,6 +5801,7 @@ ctx.translate(0, Math.round(charY));
                                 }
 
                                 if (r.translation) {
+                                    // 强制将 [BR]、<br> 统一替换为标准 【BR】（不区分大小写）
                                     r.translation = r.translation.replace(/\[BR\]|【BR】|<br>/gi, '【BR】');
                                     r.translation = cleanTranslationText(r.translation);
                                 }
@@ -7307,9 +7331,21 @@ ctx.translate(0, Math.round(charY));
             if (matchedFiles[currentFileIndex]) {
                 matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
             }
+            // --- 修改开始：处理导出键名后缀 ---
+            const exportedRegions = regions.map(r => {
+                const newR = { ...r };
+                // 将内存值转存到带后缀的键名中
+                newR.line_spacing_mtu = r.line_spacing;
+                newR.letter_spacing_mtu = r.letter_spacing;
+                // 删除不带后缀的原始键名（可选，为了保持 JSON 纯净）
+                delete newR.line_spacing;
+                delete newR.letter_spacing;
+                return newR;
+            });
+            // --- 修改结束 ---
 
             const exportData = {
-                regions: JSON.parse(JSON.stringify(regions)),
+                regions: exportedRegions, // 使用转换后的数据
                 mask_raw: matchedFiles[currentFileIndex]?.mask_raw || null, // 此时已更新
                 paint_raw: paintCanvas.toDataURL() 
             };
@@ -7347,9 +7383,19 @@ ctx.translate(0, Math.round(charY));
             
             // 遍历内存中的所有文件数据
             matchedFiles.forEach(item => {
+                // --- 修改开始：批量转换后缀 ---
+                const exportedRegions = item.regions.map(r => {
+                    const newR = { ...r };
+                    newR.line_spacing_mtu = r.line_spacing;
+                    newR.letter_spacing_mtu = r.letter_spacing;
+                    delete newR.line_spacing;
+                    delete newR.letter_spacing;
+                    return newR;
+                });
+                // --- 修改结束 ---
+
                 const fileContent = {
-                    regions: item.regions,
-                    // 【核心修复】从内存中提取每一页存好的蒙版和涂鸦
+                    regions: exportedRegions,
                     mask_raw: item.mask_raw || null,
                     paint_raw: item.paint_raw || null               
                 };
