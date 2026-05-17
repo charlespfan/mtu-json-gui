@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v19.0.17.10)</title>
+    <title>MTU 嵌字编辑器 (v19.0.17.12)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -493,8 +493,11 @@
                     <button class="rt-btn text-yellow-300" onclick="insertTagWithParam('x', 'X位移', '5')" title="水平位移 [x=5]">[X]</button>
                     <button class="rt-btn text-yellow-300" onclick="insertTagWithParam('y', 'Y位移', '5')" title="垂直位移 [y=5]">[Y]</button>
                     <button class="rt-btn text-blue-400" 
-                            onclick="insertTagWithParam('lk', '重新定义行距倍率', '0')" 
-                            title="重新定义本行与上一行的间距 [lk=0]">[Lk]</button>
+                            onclick="insertTagWithParam('lk', '设置与上一行的行距', '0')" 
+                            title="控制本行与上一行的间距 [lk=0]">[Lk]</button>
+                    <button class="rt-btn text-cyan-400" 
+                            onclick="insertTagWithParam('nk', '设置与下一行的行距', '0')" 
+                            title="控制本行与下一行的间距 [nk=0]">[Nk]</button>
                     <button class="rt-btn" onclick="insertTag('t')" title="纵中横 [t]">[T]</button>
                     <button class="rt-btn" onclick="insertTag('nt')" title="局部取消纵中横 [nt]">[nT]</button>
                     <button class="rt-btn" onclick="insertTag('d')" title="着重号 [d]">[•]</button>
@@ -2159,7 +2162,7 @@
             const styleStack = [{ 
                 bold: false, italic: false, tcy: false, dot: false, 
                 scale: 1.0, font: null, ruby: null, rotation: 0,
-                kerning: 0, offX: 0, offY: 0, vShear: 0, preKerning: 0, lineKerning: null,// [新增] 初始前间距为 0
+                kerning: 0, offX: 0, offY: 0, vShear: 0, preKerning: 0, lineKerning: null, nextKerning: null,// [新增] 初始前间距为 0
                 mirror: false,  // 水平翻转
                 mirrorV: false  // 新增：竖向翻转
             }];
@@ -2213,6 +2216,8 @@
                         } 
                         // 在 tagName 判断逻辑循环中（约 770 行附近）添加
                         else if (tagName === 'lk' && param) currentStyle.lineKerning = parseFloat(param);
+                        // 2. 在 tagName 判断逻辑循环中添加解析
+                        else if (tagName === 'nk' && param) currentStyle.nextKerning = parseFloat(param);
 
                         styleStack.push(currentStyle);
                     } else { if (styleStack.length > 1) styleStack.pop(); }
@@ -4420,33 +4425,56 @@
             // === [新增] 动态布局计算 (Dynamic Layout Engine) ===
             // 扫描每一行，判断是否需要因为 Ruby 或 着重号 而撑开间距
             // === [修正] 动态布局计算：支持 Ruby 与着重号共存 ===
+            // 在 map 循环外部定义一个变量，用来存储“上一行要求的下一行间距”
+            // --- 1. 在 map 循环外部定义状态变量 ---
+            let pendingNextLineSpacing = null;
+
             const lineLayouts = processedLines.map((tokens, lineIdx) => {
                 let hasRuby = false;
                 let hasDot = false;
-                let localLineSpacing = null; // 用于存储本行的覆盖倍率
+                let localLineSpacing = null; // 存储本行的 [lk]
+                let localNextSpacing = null; // 存储本行的 [nk]
 
+                // --- 2. 遍历 Token 提取所有样式 ---
                 const checkToken = (tok) => {
                     if (tok.style.ruby) hasRuby = true;
                     if (tok.style.dot) hasDot = true;
-                    // 如果 token 带有 lk 属性且不为 null，记录它
+                    
+                    // 提取 LK（控制本行与上一行）
                     if (tok.style.lineKerning !== null && tok.style.lineKerning !== undefined) {
                         localLineSpacing = tok.style.lineKerning;
                     }
+                    // 提取 NK（控制本行与下一行）
+                    if (tok.style.nextKerning !== null && tok.style.nextKerning !== undefined) {
+                        localNextSpacing = tok.style.nextKerning;
+                    }
+                    
                     if (tok.subTokens) tok.subTokens.forEach(checkToken);
                 };
                 tokens.forEach(checkToken);
 
-                // 核心逻辑：如果本行有 [lk]，使用它；否则使用顶栏的全局倍率
-                const effectiveMult = (localLineSpacing !== null) ? localLineSpacing : lineSpacingMult;
+                // --- 3. 核心优先级逻辑 (修复点) ---
+                let effectiveMult = lineSpacingMult; // 默认使用全局设置
 
-                // 计算间距像素：(倍率 - 1) * 字号
-                // 这样当 [lk=1.2] 时，效果与顶栏 1.2 完全一致；当 [lk=0.8] 时，支持负数重叠
+                // 如果上一行通过 [nk] 指定了这一行的间距
+                if (pendingNextLineSpacing !== null) {
+                    effectiveMult = pendingNextLineSpacing;
+                }
+
+                // 如果本行通过 [lk] 显式指定了与上一行的间距，则 [lk] 拥有最高优先级，覆盖掉 [nk]
+                if (localLineSpacing !== null) {
+                    effectiveMult = localLineSpacing;
+                }
+
+                // 计算最终像素间距
                 let requiredGap = baseFontSize * (effectiveMult - 1);
 
-                // 保持原有的 Ruby 和 着重号避让逻辑
+                // --- 4. 更新状态，供下一行使用 ---
+                pendingNextLineSpacing = localNextSpacing;
+
+                // 避让逻辑 (保持不变)
                 const rubySpace = baseFontSize * (RUBY_SIZE_RATIO + 0.05);
                 const dotSpace = baseFontSize * (DOT_RADIUS_RATIO * 2 + DOT_OFFSET_RATIO + 0.05);
-
                 if (hasRuby && hasDot) {
                     requiredGap = Math.max(requiredGap, rubySpace + dotSpace);
                 } else if (hasRuby) {
