@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v19.0.17.12)</title>
+    <title>MTU 嵌字编辑器 (v19.0.17.15)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -297,10 +297,19 @@
             <div class="flex flex-col">
                 <span class="text-[9px] text-gray-400 uppercase tracking-wider font-bold text-yellow-500">字号</span>
                 <div class="flex gap-1">
-                    <input type="number" id="fontSizeInput" disabled step="1" title="快捷键: [ 和 ] 调节字号大小" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 w-12 h-6 text-center focus:border-yellow-500 transition-colors" placeholder="-">
+                    <input type="number" id="fontSizeInput" step="1" title="快捷键: [ 和 ] 调节字号大小" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-1 py-0.5 w-12 h-6 text-center focus:border-yellow-500 transition-colors" placeholder="-">
                     <button onclick="applyAutoFontSize()" class="bg-yellow-600 hover:bg-yellow-500 text-white text-[10px] rounded px-1 flex items-center justify-center border border-yellow-700 w-6 h-6" title="单页自动字号">
                         自
                     </button>
+                    <button onclick="applyModeFontSize()" class="bg-blue-600 hover:bg-blue-500 text-white text-[10px] rounded px-1 flex items-center justify-center border border-blue-700 w-6 h-6" title="自动提取并应用当前页字号众数">
+                        众
+                    </button>
+                    <button id="btnForceFontSize" class="bg-gray-700 hover:bg-yellow-600 text-white rounded px-1 flex items-center justify-center border border-gray-600 transition-colors w-6 h-6" title="强制应用当前字号到全书所有页">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                        </svg>
+                    </button>
+                  
                 </div>
             </div>
             <div class="flex flex-col mx-1">
@@ -6422,11 +6431,28 @@ ctx.translate(0, Math.round(charY));
         document.getElementById('btnExportSingle').onclick = exportCurrentSingleImage;
 
         function disableControls() {
-            // 禁用字号，因为它目前不属于全局调节范畴
-            fontSizeInput.disabled = true; 
-            fontSizeInput.value = '';
+            fontSizeInput.disabled = false; 
+            fontSizeInput.placeholder = '全页';
 
-            // 显式确保这两个是开启的（即便 resetSidebar 没处理好，这里也能保底）
+            // 1. 动态统计当前页所有行框字号的众数
+            let modeSize = 20; // 默认保底字号
+            if (regions && regions.length > 0) {
+                const counts = {};
+                let maxCount = 0;
+                regions.forEach(r => {
+                    const size = Math.round(r.font_size || 20);
+                    counts[size] = (counts[size] || 0) + 1;
+                    if (counts[size] > maxCount) {
+                        maxCount = counts[size];
+                        modeSize = size;
+                    }
+                });
+            }
+
+            // 2. 从众数减 1 出发（保底不小于 1）
+            fontSizeInput.value = Math.max(1, modeSize);
+
+            // 显式确保这两个是开启的
             lineSpacingInput.disabled = false; 
             letterSpacingInput.disabled = false;
             strokeWidthInput.disabled = false;
@@ -6752,7 +6778,48 @@ ctx.translate(0, Math.round(charY));
             }
             draw();
         };
+        // 新增：自动计算并应用当前页文本框字号的众数
+        window.applyModeFontSize = function() {
+            if (!regions || regions.length === 0) {
+                alert("当前页面没有有效的区域数据！");
+                return;
+            }
 
+            // 1. 动态统计当前页所有框的字号出现频率
+            const counts = {};
+            let maxCount = 0;
+            let modeSize = 20; // 默认保底基准值
+
+            regions.forEach(r => {
+                const size = Math.round(r.font_size || 20);
+                counts[size] = (counts[size] || 0) + 1;
+                if (counts[size] > maxCount) {
+                    maxCount = counts[size];
+                    modeSize = size;
+                }
+            });
+
+            // 2. 强制将统计出的众数字号应用到当前页的所有文本框
+            regions.forEach(r => {
+                r.font_size = modeSize;
+            });
+
+            // 3. 更新顶栏输入框的数字，以便后续微调
+            fontSizeInput.value = modeSize;
+
+            // 4. 刷新画布
+            draw();
+            
+            // 视觉反馈：让按钮文字闪烁一下提示成功
+            const btn = event.currentTarget;
+            const originalText = btn.innerText;
+            btn.innerText = "OK";
+            btn.classList.replace('bg-blue-600', 'bg-green-600');
+            setTimeout(() => {
+                btn.innerText = originalText;
+                btn.classList.replace('bg-green-600', 'bg-blue-600');
+            }, 600);
+        };
         /**
         * 归位功能：实现“斜”（智能探测）与“直”（强制转正）
         * @param {string} mode - 'slanted' (智能角度) 或 'straight' (强制 0 度)
@@ -6891,19 +6958,33 @@ ctx.translate(0, Math.round(charY));
             if (e.key === 'ArrowRight') { e.preventDefault(); navigateFiles(-1); }
 
             // 字号调节 (步进 1)
-            // 找到修改为：
             if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
+                // 单框模式
                 const r = regions[activeRegionIndex];
                 if (e.key === '[') {
-                    // 步进改为 1，并强制取整
                     r.font_size = Math.max(1, Math.round(parseFloat(r.font_size) || 20) - 1);
-                    fontSizeInput.value = r.font_size; // 整数无需 toFixed
+                    fontSizeInput.value = r.font_size;
                     draw();
                 }
                 if (e.key === ']') {
-                    // 步进改为 1，并强制取整
                     r.font_size = Math.round(parseFloat(r.font_size) || 20) + 1;
                     fontSizeInput.value = r.font_size;
+                    draw();
+                }
+            } else {
+                // 新增：空白处全页模式下，让 [ 和 ] 快捷键也能直接控全页
+                if (e.key === '[') {
+                    const currentVal = parseFloat(fontSizeInput.value) || 20;
+                    const newVal = Math.max(1, Math.round(currentVal) - 1);
+                    fontSizeInput.value = newVal;
+                    regions.forEach(r => r.font_size = newVal);
+                    draw();
+                }
+                if (e.key === ']') {
+                    const currentVal = parseFloat(fontSizeInput.value) || 20;
+                    const newVal = Math.round(currentVal) + 1;
+                    fontSizeInput.value = newVal;
+                    regions.forEach(r => r.font_size = newVal);
                     draw();
                 }
             }
@@ -7186,6 +7267,29 @@ ctx.translate(0, Math.round(charY));
             console.log("标点模式已全局应用:", currentMode);
         });
 
+        // 3. 强制全局字号刷新按钮点击事件
+        document.getElementById('btnForceFontSize').addEventListener('click', () => {
+            const val = parseFloat(fontSizeInput.value);
+            if (isNaN(val) || val <= 0) {
+                alert("请先在字号输入框中输入一个有效的数字！");
+                return;
+            }
+            if (!confirm(`确定要将当前输入的字号 [${val}] 强制覆盖并应用到全书所有页面的所有文本框吗？`)) return;
+
+            // A. 修改当前页的所有框
+            regions.forEach(r => r.font_size = val);
+            
+            // B. 修改内存里批量项目中的所有页所有框
+            if (matchedFiles && matchedFiles.length > 0) {
+                matchedFiles.forEach(file => {
+                    file.regions.forEach(r => r.font_size = val);
+                });
+            }
+            
+            draw(); // 触发页面重绘更新
+            alert(`字号 ${val} 已成功应用至全局所有文本区域！`);
+        });
+        
         // 绑定画笔按钮
         // 找到 maskBrushBtn.onclick
         // 1. 蒙版画笔
