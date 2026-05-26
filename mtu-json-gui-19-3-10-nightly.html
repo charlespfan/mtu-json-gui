@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v19.0.17.15)</title>
+    <title>MTU 嵌字编辑器 (v19.3.10)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -245,6 +245,11 @@
                 <button id="btnTrans" class="px-2 py-0.5 text-xs rounded bg-blue-600 text-white">译</button>
                 <button id="btnOriginal" class="px-2 py-0.5 text-xs rounded text-gray-300">原</button>
                 <button id="btnCompare" class="px-2 py-0.5 text-xs rounded text-gray-300">对</button>
+            </div>
+            <div class="w-px h-4 bg-gray-600"></div>
+            <div class="flex bg-gray-700 rounded p-0.5" id="viewModeGroup">
+                <button id="btnViewAuto" onclick="setViewFitMode('auto')" class="px-2 py-0.5 text-xs rounded bg-blue-600 text-white font-bold" title="全屏自适应">适屏</button>
+                <button id="btnViewWidth" onclick="setViewFitMode('width')" class="px-2 py-0.5 text-xs rounded text-gray-300 font-bold" title="宽度自适应">适宽</button>
             </div>
         </div>
         
@@ -719,10 +724,48 @@
                     <input type="color" id="paintColorPicker" value="#ffffff" class="hidden">
                     <button id="paintEraserBtn" class="rt-btn" title="涂鸦橡皮 (右键擦，中键画，快捷键: < 和 > 调节笔触大小)">🧹</button>
                     <button id="comboModeBtn" class="rt-btn text-purple-400 border-purple-500/30" title="混合模式：右键自由涂鸦，中键蒙版橡皮，快捷键: < 和 > 调节笔触大小">混</button>
+                </div>
+                <div class="flex flex-col gap-0">
                     <button id="autoFillBtnRight" class="rt-btn text-green-400 border-green-500/30" title="自动背景填充：检测行框边缘并填充纯黑/纯白">填</button>
-                    <label class="flex items-center cursor-pointer mb-1" title="开启后，自动填充会尝试覆盖气泡外的注音">
+                    <label class="flex items-center cursor-pointer mb-1" title="开启后，自动填充会尝试覆盖气泡外的注音振假名">
                         <input type="checkbox" id="firstLineExpandCb" class="h-3 w-3 accent-green-500">
-                        <span class="text-[9px] text-gray-400 ml-1">填振</span>
+                        <span class="text-[9px] text-gray-400 ml-0">填振</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer mb-1" title="开启后，若检测到行框下方有相反颜色，则自动向下额外偏移填充">
+                        <input type="checkbox" id="secondaryExpandCb" class="h-3 w-3 accent-green-500" checked>
+                        <span class="text-[9px] text-gray-400 ml-0">填落</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer mb-1" title="开启后，点击“填”会同步将满足填充条件的行框之外的残留蒙版像素全部削去清除">
+                        <input type="checkbox" id="eraseMaskCb" class="h-3 w-3 accent-red-500">
+                        <span class="text-[9px] text-gray-400 ml-0">削蒙</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer mb-1" title="开启后，“填”功能将升级为智能油漆桶算法，底色会自动向外扩散并完美贴合封闭气泡边缘">
+                        <input type="checkbox" id="enableFloodFillCb" class="h-3 w-3 accent-green-500">
+                        <span class="text-[9px] text-gray-400 ml-0">桶填</span>
+                    </label>
+                    <div class="flex flex-col items-center mb-1">
+                        <span class="text-[9px] text-gray-400 scale-90 leading-none">容差</span>
+                        <input type="number" id="floodToleranceInput" min="1" max="255" value="8" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-0 py-0 w-8 h-4 text-center focus:border-blue-500 outline-none" title="色彩容差(1-255)。数值越小，越防漏色。">
+                    </div>
+                    <div class="flex flex-col items-center mb-1">
+                        <span class="text-[9px] text-gray-400 scale-90 leading-none">颗粒</span>
+                        <input type="number" id="floodRadiusInput" min="0" max="20" value="1" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-0 py-0 w-8 h-4 text-center focus:border-blue-500 outline-none" title="液体颗粒半径（膨胀像素）。设为0代表原样输出；增大该数值液体会强行向外溢出。">
+                    </div>
+                    <label class="flex items-center cursor-pointer mt-1" title="与“桶填”一同开启后，文字超出“桶填”边界的总框会被清除换行符">
+                        <input type="checkbox" id="enableShapeWrapCb" class="h-3 w-3 accent-green-500">
+                        <span class="text-[9px] text-gray-400 ml-0">形排</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer mb-1" title="开启后，“填”生成的背景矩形框顶点会变成圆角，默认关闭">
+                        <input type="checkbox" id="enableRoundedRectCb" class="h-3 w-3 accent-green-500">
+                        <span class="text-[9px] text-gray-400 ml-0">圆角</span>
+                    </label>
+                    <div class="flex flex-col items-center mb-1" title="控制“圆角”开启时的圆角半径大小（单位：像素）">
+                        <span class="text-[9px] text-gray-400 scale-90 leading-none">半径</span>
+                        <input type="number" id="roundedRectRadiusInput" min="1" max="99" value="8" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-0 py-0 w-8 h-4 text-center focus:border-blue-500 outline-none">
+                    </div>
+                    <label class="flex items-center cursor-pointer mb-1" title="开启后，自动填充时会对顶框和底框进行圆形擦除，默认关闭">
+                        <input type="checkbox" id="enableCircleEraseCb" class="h-3 w-3 accent-green-500">
+                        <span class="text-[9px] text-gray-400 ml-0">圆擦</span>
                     </label>
                 </div>
                 <div class="mt-auto mb-2 flex flex-col items-center gap-2">
@@ -842,13 +885,28 @@
         // [新增] 记录最后获得焦点的输入框 ID，默认为译文栏
         let lastActiveInputId = 'transEditArea';
 
-        let enableFirstLineExpand = false; // 默认开启扩张逻辑
+
         let paintOpacity = 1.0; // 默认不透明
         let showPaintMask = false; // 控制蓝色遮罩显示
         // [新增] 外描边全局变量
         let activeOuterStrokeColor = "#000000"; 
         let activeOuterStrokeWidth = 0.4; // 比例，0.4 表示 40% 字号
         let activeOuterStrokeEnabled = false;
+        let enableFirstLineExpand = false; // 默认开启扩张逻辑
+        let enableCircleErase = false;     // 新增：是否进行圆形擦除，默认关闭
+        let enableRoundedRect = false;     // 新增：是否对填充框矩形圆角，默认关闭
+        let roundedRectRadius = 8;         // 新增：存储圆角半径的全局变量，默认值为 8
+        let enableSecondaryExpand = true; // 新增：是否开启“填落”二次偏移，默认关闭
+        let enableEraseMask = false;       // 新增：是否开启“削蒙”蒙版裁剪，默认关闭
+        let enableFloodFill = false;       // 新增：是否开启“桶填”油漆桶算法，默认关闭
+
+        let floodTolerance = 8;           // 默认容差设定为 75
+        let floodRadius = 1;               // 默认液体颗粒半径为 2 像素（相当于直径 5 像素的圆形颗粒）
+
+        let enableShapeWrap = false;       // 新增：是否开启“形排”智能换行，默认关闭
+
+
+
 
 
         // --- 在脚本顶部的变量定义区 ---
@@ -1000,6 +1058,55 @@
         const paintOpacityValue = document.getElementById('paintOpacityValue');
 
 
+
+
+
+        // 绑定形排组件的监听器
+        document.getElementById('enableShapeWrapCb').addEventListener('change', (e) => {
+            enableShapeWrap = e.target.checked;
+        });
+        // 绑定容差输入监听
+        document.getElementById('floodToleranceInput').addEventListener('input', (e) => {
+            let val = parseInt(e.target.value);
+            if (!isNaN(val) && val >= 1 && val <= 255) floodTolerance = val;
+        });
+
+        // 绑定颗粒半径输入监听
+        document.getElementById('floodRadiusInput').addEventListener('input', (e) => {
+            let val = parseInt(e.target.value);
+            if (!isNaN(val) && val >= 0) floodRadius = val;
+        });
+        // 绑定桶填组件的监听器
+        document.getElementById('enableFloodFillCb').addEventListener('change', (e) => {
+            enableFloodFill = e.target.checked;
+        });
+        // 绑定削蒙组件的监听器
+        document.getElementById('eraseMaskCb').addEventListener('change', (e) => {
+            enableEraseMask = e.target.checked;
+        });
+        // 绑定新组件的监听器
+        document.getElementById('secondaryExpandCb').addEventListener('change', (e) => {
+            enableSecondaryExpand = e.target.checked;
+        });
+
+        // 新增：绑定半径输入框的即时监听器
+        document.getElementById('roundedRectRadiusInput').addEventListener('input', (e) => {
+            let val = parseInt(e.target.value);
+            if (!isNaN(val) && val >= 1) {
+                roundedRectRadius = val; // 即时同步前端输入的半径数值
+            }
+        });
+
+        // 绑定圆角组件的监听器
+        document.getElementById('enableRoundedRectCb').addEventListener('change', (e) => {
+            enableRoundedRect = e.target.checked;
+        });
+
+        // 绑定新组件的监听器
+        document.getElementById('enableCircleEraseCb').addEventListener('change', (e) => {
+            enableCircleErase = e.target.checked;
+        });
+
         // 绑定外描边颜色选择
         document.getElementById('btnOuterStrokeColor').onclick = () => document.getElementById('nativeOuterStrokePicker').click();
         document.getElementById('nativeOuterStrokePicker').oninput = (e) => {
@@ -1016,7 +1123,8 @@
         document.getElementById('showPaintMaskCb').addEventListener('change', (e) => { 
             showPaintMask = e.target.checked; 
             draw(); // 立即触发重绘
-        });
+        }); 
+
         /**
         * 拦截浏览器刷新/关闭行为
         */
@@ -1064,152 +1172,690 @@
         });
         autoFillBtnRight.onclick = async () => {
             if (matchedFiles.length === 0) return alert("请先批量导入项目文件夹！");
-            // 【新增】在开始批量填充前，先把当前页你改过的字存好
+            
+            // 1. 开始批量处理前，先把当前页你改过的字和涂鸦存好
             saveCurrentStateToMemory();
+            
             const originalText = autoFillBtnRight.innerText;
-            autoFillBtnRight.innerText = "处理中...";
             autoFillBtnRight.disabled = true;
 
-            const procCanvas = document.createElement('canvas');
-            const procCtx = procCanvas.getContext('2d');
-            const analysisCanvas = document.createElement('canvas');
-            const analysisCtx = analysisCanvas.getContext('2d');
             const THRESHOLD = 0.7; 
+            // 【核心联动】：完美对接并接受顶栏配置的并发渲染数数量
+            const CONCURRENCY_LIMIT = globalConcurrencyLimit; 
 
-            // 辅助：检测区域内是否存在相反颜色
-            const hasOppositeColor = (ctx, poly, targetOpposite) => {
-                // 获取包围盒进行快速采样
-                let minX = Math.min(...poly.map(p => p[0])), maxX = Math.max(...poly.map(p => p[0]));
-                let minY = Math.min(...poly.map(p => p[1])), maxY = Math.max(...poly.map(p => p[1]));
-                const data = ctx.getImageData(minX, minY, maxX - minX, maxY - minY).data;
-                for (let i = 0; i < data.length; i += 16) { // 抽样检测提高性能
-                    const r = data[i], g = data[i+1], b = data[i+2];
-                    if (targetOpposite === 'black' && r < 60 && g < 60 && b < 60) return true;
-                    if (targetOpposite === 'white' && r > 200 && g > 200 && b > 200) return true;
-                }
-                return false;
-            };
+            // 2. 封装单个页面的自动填充子任务（从外部独立解耦出来）
+            async function processPageTask(item, index) {
+                // 并发核心：在任务内部为每页独立创建私有画布，互不干扰
+                const procCanvas = document.createElement('canvas');
+                const procCtx = procCanvas.getContext('2d');
+                const analysisCanvas = document.createElement('canvas');
+                const analysisCtx = analysisCanvas.getContext('2d');
 
-            for (let i = 0; i < matchedFiles.length; i++) {
-                const item = matchedFiles[i];
-                autoFillBtnRight.innerText = `处理 ${i + 1}/${matchedFiles.length}`;
                 const img = await loadImage(URL.createObjectURL(item.image));
-                analysisCanvas.width = img.width; analysisCanvas.height = img.height;
+                analysisCanvas.width = img.width; 
+                analysisCanvas.height = img.height;
                 analysisCtx.drawImage(img, 0, 0);
                 URL.revokeObjectURL(img.src);
 
-                procCanvas.width = img.width; procCanvas.height = img.height;
+                // [核心优化] 一页只向 GPU 要一次全图数据
+                const pageImageData = analysisCtx.getImageData(0, 0, img.width, img.height);
+
+                procCanvas.width = img.width; 
+                procCanvas.height = img.height;
                 procCtx.clearRect(0, 0, procCanvas.width, procCanvas.height);
+                
                 if (item.paint_raw) {
                     const oldPaint = await loadImage(item.paint_raw);
                     if (oldPaint) procCtx.drawImage(oldPaint, 0, 0);
                 }
 
                 let pageChanged = false;
+                let qualifiedLines = []; // 新增：用来收集本页所有满足填色条件的行框坐标
 
-                const drawAndClip = (regionLines, color, offset = {x: 0, y: 0}, skipFirst = false) => {
+                // 私有的圆角/直角裁剪渲染逻辑
+                // 升级 drawAndClip：追加 forceMaxRadius 参数用于支撑填落的强制最大圆角
+                const drawAndClip = (regionLines, color, offset = {x: 0, y: 0}, skipFirst = false, forceMaxRadius = false) => {
                     procCtx.save();
-                    // 1. 填充
                     procCtx.globalCompositeOperation = 'source-over';
                     procCtx.fillStyle = color;
+                    
                     regionLines.forEach((line, idx) => {
                         if (skipFirst && idx === 0) return; // 跳过首行偏移
-                        procCtx.beginPath();
-                        procCtx.moveTo(line[0][0] + offset.x, line[0][1] + offset.y);
-                        for (let k = 1; k < line.length; k++) procCtx.lineTo(line[k][0] + offset.x, line[k][1] + offset.y);
-                        procCtx.closePath(); procCtx.fill();
+                        
+                        // 安全读取外部开关（若未定义则默认为 false）
+                        const isRoundEnabled = (typeof enableRoundedRect !== 'undefined') ? enableRoundedRect : false;
+                        const rRadius = (typeof roundedRectRadius !== 'undefined') ? roundedRectRadius : 8;
+
+                        // 条件：如果全局开启了“圆角”，或者当前属于“填落”的强制圆角模式
+                        if (isRoundEnabled || forceMaxRadius) {
+                            const d1 = Math.hypot(line[1][0] - line[0][0], line[1][1] - line[0][1]);
+                            const d2 = Math.hypot(line[3][0] - line[0][0], line[3][1] - line[0][1]);
+                            const shortSide = Math.min(d1, d2);
+                            
+                            // 核心改动：如果是填落触发，半径直接拉满到最大 (shortSide / 2)，渲染成完美的胶囊半圆形
+                            const radius = forceMaxRadius ? (shortSide / 2) : Math.min(rRadius, shortSide / 2);
+
+                            const pts = line.map(p => ({ x: p[0] + offset.x, y: p[1] + offset.y }));
+                            procCtx.beginPath();
+                            procCtx.moveTo((pts[3].x + pts[0].x) / 2, (pts[3].y + pts[0].y) / 2);
+                            for (let k = 0; k < 4; k++) {
+                                const pCurrent = pts[k];
+                                const pNext = pts[(k + 1) % 4];
+                                procCtx.arcTo(pCurrent.x, pCurrent.y, (pCurrent.x + pNext.x) / 2, (pCurrent.y + pNext.y) / 2, radius);
+                            }
+                            procCtx.closePath(); 
+                            procCtx.fill();
+                        } else {
+                            // 直角矩形经典分支
+                            procCtx.beginPath();
+                            procCtx.moveTo(line[0][0] + offset.x, line[0][1] + offset.y);
+                            for (let k = 1; k < line.length; k++) procCtx.lineTo(line[k][0] + offset.x, line[k][1] + offset.y);
+                            procCtx.closePath(); 
+                            procCtx.fill();
+                        }
                     });
-                    // 2. 擦除圆角
-                    procCtx.globalCompositeOperation = 'destination-out';
-                    const first = regionLines[0], last = regionLines[regionLines.length - 1];
-                    const isV = item.regions.find(r => r.lines === regionLines)?.direction === 'v';
-                    const erase = (p, radius) => {
-                        procCtx.beginPath(); procCtx.arc(p[0] + offset.x, p[1] + offset.y, radius, 0, Math.PI * 2); procCtx.fill();
-                    };
-                    if (isV) {
-                        const r1 = Math.hypot(first[1][0] - first[0][0], first[1][1] - first[0][1]) / 2;
-                        if (!skipFirst) { erase(first[1], r1); erase(first[2], r1); }
-                        const r2 = Math.hypot(last[1][0] - last[0][0], last[1][1] - last[0][1]) / 2;
-                        erase(last[0], r2); erase(last[3], r2);
-                    } else {
-                        const r1 = Math.hypot(first[3][0] - first[0][0], first[3][1] - first[0][1]) / 2;
-                        if (!skipFirst) { erase(first[0], r1); erase(first[1], r1); }
-                        const r2 = Math.hypot(last[3][0] - last[0][0], last[3][1] - last[0][1]) / 2;
-                        erase(last[3], r2); erase(last[2], r2);
+
+                    if (enableCircleErase) {
+                        procCtx.globalCompositeOperation = 'destination-out';
+                        const first = regionLines[0], last = regionLines[regionLines.length - 1];
+                        const isV = item.regions.find(r => r.lines === regionLines)?.direction === 'v';
+                        const erase = (p, radius) => {
+                            procCtx.beginPath(); procCtx.arc(p[0] + offset.x, p[1] + offset.y, radius, 0, Math.PI * 2); procCtx.fill();
+                        };
+                        if (isV) {
+                            const r1 = Math.hypot(first[1][0] - first[0][0], first[1][1] - first[0][1]) / 2;
+                            if (!skipFirst) { erase(first[1], r1); erase(first[2], r1); }
+                            const r2 = Math.hypot(last[1][0] - last[0][0], last[1][1] - last[0][1]) / 2;
+                            erase(last[0], r2); erase(last[3], r2);
+                        } else {
+                            const r1 = Math.hypot(first[3][0] - first[0][0], first[3][1] - first[0][1]) / 2;
+                            if (!skipFirst) { erase(first[0], r1); erase(first[1], r1); }
+                            const r2 = Math.hypot(last[3][0] - last[0][0], last[3][1] - last[0][1]) / 2;
+                            erase(last[3], r2); erase(last[2], r2);
+                        }
                     }
                     procCtx.restore();
                 };
 
+                const hasOppositeColor = (ctx, poly, targetOpposite) => {
+                    let minX = Math.floor(Math.min(...poly.map(p => p[0])));
+                    let maxX = Math.ceil(Math.max(...poly.map(p => p[0])));
+                    let minY = Math.floor(Math.min(...poly.map(p => p[1])));
+                    let maxY = Math.ceil(Math.max(...poly.map(p => p[1])));
+                    if (maxX <= minX || maxY <= minY) return false;
+                    try {
+                        const data = ctx.getImageData(Math.round(minX), Math.round(minY), Math.round(maxX - minX), Math.round(maxY - minY)).data;
+                        for (let i = 0; i < data.length; i += 16) {
+                            const r = data[i], g = data[i+1], b = data[i+2];
+                            if (targetOpposite === 'black' && r < 60 && g < 60 && b < 60) return true;
+                            if (targetOpposite === 'white' && r > 200 && g > 200 && b > 200) return true;
+                        }
+                    } catch(e){}
+                    return false;
+                };
+
                 item.regions.forEach(r => {
                     if (!r.lines || r.lines.length === 0) return;
-                    const stats = analyzeLineEdges(analysisCtx, r.lines[0]);
-                    let fillColor = null;
-                    if ((stats.black / (stats.black + stats.white + stats.other)) > THRESHOLD) fillColor = "#000000";
-                    else if ((stats.white / (stats.black + stats.white + stats.other)) > THRESHOLD) fillColor = "#ffffff";
 
+                    // [核心优化] 联合投票大坝：累加当前总框下所有行框小矩形的边缘检测像素点
+                    const totalStats = { black: 0, white: 0, other: 0 };
+                    r.lines.forEach(line => {
+                        const lineStats = analyzeLineEdges(pageImageData, line); // 传入全图内存对象和单独行框
+                        totalStats.black += lineStats.black;
+                        totalStats.white += lineStats.white;
+                        totalStats.other += lineStats.other;
+                    });
+
+                    const totalPixels = totalStats.black + totalStats.white + totalStats.other;
+                    let fillColor = null;
+
+                    // 汇总全框边缘总和进行黑白占比判定
+                    if (totalPixels > 0) {
+                        if ((totalStats.black / totalPixels) > THRESHOLD) fillColor = "#000000";
+                        else if ((totalStats.white / totalPixels) > THRESHOLD) fillColor = "#ffffff";
+                    }
                     if (fillColor) {
+                        // 新增：只要这个框符合填色条件，把它的所有行框坐标全部记录下来用于削蒙
+                        r.lines.forEach(line => qualifiedLines.push(line));
+                        
                         const isV = r.direction === 'v';
                         const firstLine = r.lines[0];
                         const lineWidth = isV ? Math.hypot(firstLine[1][0] - firstLine[0][0], firstLine[1][1] - firstLine[0][1]) : Math.hypot(firstLine[3][0] - firstLine[0][0], firstLine[3][1] - firstLine[0][1]);
                         
-                        // 计算 1/4 延伸探测区
                         const extDist = lineWidth / 4;
                         const extPoly = isV ? 
                             [firstLine[1], [firstLine[1][0]+extDist, firstLine[1][1]], [firstLine[2][0]+extDist, firstLine[2][1]], firstLine[2]] : 
                             [[firstLine[0][0], firstLine[0][1]-extDist], [firstLine[1][0], firstLine[1][1]-extDist], firstLine[1], firstLine[0]];
                         
                         const opposite = fillColor === "#ffffff" ? "black" : "white";
-                        // 核心条件：如果没有发现相反颜色，则首行跳过偏移绘制
-                        // --- 修改前 ---
-                        // const skipFirstOffset = !hasOppositeColor(analysisCtx, extPoly, opposite);
+                        const skipFirstOffset = enableFirstLineExpand ? !hasOppositeColor(analysisCtx, extPoly, opposite) : true;
 
-                        // --- 修改后 ---
-                        // 如果手动关闭了扩张，则强制跳过偏移绘制 (skipFirstOffset = true)
-                        // 如果开启了扩张，则走原有的自动探测逻辑
-                        const skipFirstOffset = enableFirstLineExpand 
-                            ? !hasOppositeColor(analysisCtx, extPoly, opposite) 
-                            : true;
+                        // 判断是否走高端的智能油漆桶路径
+                        if (enableFloodFill) {
+                            // 【1. 升级：建立当前区域的文本框局部遮罩 + 边框线描边吞噬】
+                            const rCanvas = document.createElement('canvas');
+                            rCanvas.width = img.width; rCanvas.height = img.height;
+                            const rCtx = rCanvas.getContext('2d');
+                            rCtx.fillStyle = 'white';
+                            rCtx.strokeStyle = 'white'; // 新增：设置框线描边颜色为白色
 
+                            // 设定框线向外侵蚀吞噬的宽度（单位：像素）
+                            // 推荐设为 6 到 8。数值越大，行框边框线外面被强行划入“必填文字区”的范围就越宽。
+                            rCtx.lineWidth = 6;         
+                            rCtx.lineJoin = 'round';    // 拐角修圆，防止尖角溢出污染无关区域
+
+                            r.lines.forEach(line => {
+                                rCtx.beginPath();
+                                rCtx.moveTo(line[0][0], line[0][1]);
+                                for (let k = 1; k < line.length; k++) rCtx.lineTo(line[k][0], line[k][1]);
+                                rCtx.closePath();
+                                
+                                // 核心改进：先填满框内，再用 6 像素粗细的画笔把行框的“边框线”也狠狠犁一遍
+                                rCtx.fill();
+                                rCtx.stroke(); 
+                            });
+                            const rBoxData = rCtx.getImageData(0, 0, img.width, img.height).data;
+
+                            // 【2. 收集扩散种子点】
+                            let seeds = [];
+                            r.lines.forEach(line => {
+                                let cx = Math.round((line[0][0] + line[1][0] + line[2][0] + line[3][0]) / 4);
+                                let cy = Math.round((line[0][1] + line[1][1] + line[2][1] + line[3][1]) / 4);
+                                if (cx >= 0 && cx < img.width && cy >= 0 && cy < img.height) {
+                                    seeds.push({x: cx, y: cy});
+                                }
+                            });
+
+                            // 【3. 动态防漏色安全护栏】
+                            let bMinX = Math.max(0, Math.floor(Math.min(...r.lines.flatMap(l => l.map(p => p[0])))) - lineWidth * 2);
+                            let bMaxX = Math.min(img.width - 1, Math.ceil(Math.max(...r.lines.flatMap(l => l.map(p => p[0])))) + lineWidth * 2);
+                            let bMinY = Math.max(0, Math.floor(Math.min(...r.lines.flatMap(l => l.map(p => p[1])))) - lineWidth * 2);
+                            let bMaxY = Math.min(img.height - 1, Math.ceil(Math.max(...r.lines.flatMap(l => l.map(p => p[1])))) + lineWidth * 2);
+
+                            const floodVisited = new Uint8Array(img.width * img.height);
+                            const floodStack = [];
+                            seeds.forEach(s => {
+                                const idx = s.y * img.width + s.x;
+                                floodVisited[idx] = 1;
+                                floodStack.push(idx);
+                            });
+
+                            const animData = analysisCtx.getImageData(0, 0, img.width, img.height).data;
+                            const isWhiteFill = (fillColor === "#ffffff");
+                            
+                            // 【4. 核心升级：基于明度（Luminance）动态计算阻挡阈值】
+                            const currentTolerance = floodTolerance;
+                            // 涂白模式下，明度低于此值的 pixel 将被认定为有色线框（黑、灰、棕、过渡色）
+                            const lineLuminanceThreshold = 255 - currentTolerance; 
+
+                            // BFS/DFS 位图蔓延核心扩散
+                            while (floodStack.length > 0) {
+                                const curr = floodStack.pop();
+                                const cx = curr % img.width;
+                                const cy = Math.floor(curr / img.width);
+
+                                const neighbors = [
+                                    {x: cx + 1, y: cy}, {x: cx - 1, y: cy},
+                                    {x: cx, y: cy + 1}, {x: cx, y: cy - 1}
+                                ];
+
+                                for (const n of neighbors) {
+                                    if (n.x >= bMinX && n.x <= bMaxX && n.y >= bMinY && n.y <= bMaxY) {
+                                        const nIdx = n.y * img.width + n.x;
+                                        if (floodVisited[nIdx] === 0) {
+                                            const pIdx = nIdx * 4;
+                                            
+                                            let canPass = false;
+                                            // 如果是当前行框内部的像素，强制允许水流通过（清除内部文字）
+                                            if (rBoxData[pIdx] > 0) {
+                                                canPass = true;
+                                            } else {
+                                                // 框外走明度过滤：计算当前像素的工业级明度值
+                                                const rVal = animData[pIdx];
+                                                const gVal = animData[pIdx+1];
+                                                const bVal = animData[pIdx+2];
+                                                const luminance = 0.299 * rVal + 0.587 * gVal + 0.114 * bVal;
+
+                                                if (isWhiteFill) {
+                                                    // 涂白去字：只要邻居明度高于阈值（说明是白色或浅色气泡内部），水流就可以流过去
+                                                    if (luminance > lineLuminanceThreshold) {
+                                                        canPass = true;
+                                                    }
+                                                } else {
+                                                    // 涂黑去字：只要邻居明度低于容差阈值（说明是深色暗夜气泡内部），水流就可以流过去
+                                                    if (luminance < currentTolerance) {
+                                                        canPass = true;
+                                                    }
+                                                }
+                                            }
+
+                                            if (canPass) {
+                                                floodVisited[nIdx] = 1;
+                                                floodStack.push(nIdx);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 【5. 数学形态学“圆形液体颗粒半径膨胀”】
+                            let finalVisited = floodVisited; 
+                            const currentRadius = floodRadius;
+
+                            if (currentRadius > 0) {
+                                finalVisited = new Uint8Array(img.width * img.height);
+                                for (let y = bMinY; y <= bMaxY; y++) {
+                                    for (let x = bMinX; x <= bMaxX; x++) {
+                                        const idx = y * img.width + x;
+                                        if (floodVisited[idx] === 1) {
+                                            for (let dy = -currentRadius; dy <= currentRadius; dy++) {
+                                                for (let dx = -currentRadius; dx <= currentRadius; dx++) {
+                                                    if (dx * dx + dy * dy <= currentRadius * currentRadius) {
+                                                        const nx = x + dx;
+                                                        const ny = y + dy;
+                                                        if (nx >= bMinX && nx <= bMaxX && ny >= bMinY && ny <= bMaxY) {
+                                                            finalVisited[ny * img.width + nx] = 1;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 【6. 位图高速回写 + 任意色框绝对保护盾】
+                            const procImgData = procCtx.getImageData(0, 0, img.width, img.height);
+                            const pData = procImgData.data;
+                            const fillR = isWhiteFill ? 255 : 0;
+                            const fillG = isWhiteFill ? 255 : 0;
+                            const fillB = isWhiteFill ? 255 : 0;
+
+                            for (let y = bMinY; y <= bMaxY; y++) {
+                                for (let x = bMinX; x <= bMaxX; x++) {
+                                    const vIdx = y * img.width + x;
+                                    if (finalVisited[vIdx] === 1) {
+                                        const pIdx = vIdx * 4;
+
+                                        // 框外触发有色相框拦截保护
+                                        if (rBoxData[pIdx] === 0) {
+                                            const origR = animData[pIdx];
+                                            const origG = animData[pIdx+1];
+                                            const origB = animData[pIdx+2];
+                                            const origLuminance = 0.299 * origR + 0.587 * origG + 0.114 * origB;
+
+                                            // 涂白模式：只要该像素的明度低于线框阈值（不管是黑、灰、棕还是渐变浅框），金身拦截！
+                                            if (isWhiteFill && (origLuminance <= lineLuminanceThreshold)) {
+                                                continue;
+                                            }
+                                            // 涂黑模式：只要该像素的明度高于反向阈值（说明碰到了白色或浅色线框），金身拦截！
+                                            if (!isWhiteFill && (origLuminance >= currentTolerance)) {
+                                                continue;
+                                            }
+                                        }
+
+                                        pData[pIdx] = fillR;
+                                        pData[pIdx+1] = fillG;
+                                        pData[pIdx+2] = fillB;
+                                        pData[pIdx+3] = 255; 
+                                    }
+                                }
+                            }
+                            procCtx.putImageData(procImgData, 0, 0);
+                            // 【7. 终极修正：“形排”真正文字内容像素级（竖排上下、横排左右）溢出检测与换行清除】
+                            const isShapeWrapEnabled = (typeof enableShapeWrap !== 'undefined') ? enableShapeWrap : false;
+                            
+                            if (isShapeWrapEnabled && r.translation && r.translation.trim() !== '') {
+                                let isTextOverflow = false;
+                                
+                                // A. 获取当前总框的几何中心点，作为文字排版的中心中心锚点
+                                const allX = r.lines.flatMap(l => l.map(p => p[0]));
+                                const allY = r.lines.flatMap(l => l.map(p => p[1]));
+                                const rCenterX = (Math.min(...allX) + Math.max(...allX)) / 2;
+                                const rCenterY = (Math.min(...allY) + Math.max(...allY)) / 2;
+
+                                const fSize = parseInt(r.font_size) || 20;
+                                const lHeight = fSize * 1.3; // 行高
+                                const isV = r.direction === 'v';
+
+                                // B. 按当前的换行符切分出实际渲染的每一行（一列）
+                                const textLines = r.translation.split(/【BR】|\n/);
+                                
+                                procCtx.save();
+                                // 注入当前框的真实字号与字体，进行无误差拟合测量
+                                procCtx.font = `${activeFontWeight || '400'} ${fSize}px ${r.fontFamily || activeFontFamily}`;
+
+                                if (!isV) {
+                                    // ================= 横排文字：核心探测【左端、右端】是否戳出气泡 =================
+                                    const totalHeight = textLines.length * lHeight;
+                                    textLines.forEach((lineStr, idx) => {
+                                        if (isTextOverflow) return;
+                                        
+                                        // 核心去噪：必须过滤掉富文本标签（如 [b][/b]），只测量真实可见文本的物理宽度
+                                        const cleanLineStr = lineStr.replace(/\[\/?[a-z]+ Mini(?:=[^\]]*)?\]/gi, "").replace(/\[\/?[a-z]+\]/gi, "");
+                                        const w = procCtx.measureText(cleanLineStr).width;
+                                        
+                                        // 根据漫画通常居中排版的特性，推算出文字左端和右端的真实 X 坐标
+                                        const leftX = Math.round(rCenterX - w / 2);
+                                        const rightX = Math.round(rCenterX + w / 2);
+                                        const lineY = Math.round(rCenterY - (totalHeight / 2) + (idx * lHeight) + fSize / 2);
+
+                                        // 判定：字的左边界或右边界，只要有一个踩在了油漆桶没走过的死区(=== 0)，即代表横排超出
+                                        if (leftX < 0 || rightX >= img.width || lineY < 0 || lineY >= img.height) {
+                                            isTextOverflow = true;
+                                        } else {
+                                            if (floodVisited[lineY * img.width + leftX] === 0 || floodVisited[lineY * img.width + rightX] === 0) {
+                                                isTextOverflow = true;
+                                            }
+                                        }
+                                    });
+                                } else {
+                                    // ================= 竖排文字：核心精准探测【顶端(上)、底端(下)】是否戳出气泡 =================
+                                    const totalWidth = textLines.length * lHeight;
+                                    textLines.forEach((lineStr, idx) => {
+                                        if (isTextOverflow) return;
+                                        
+                                        // 核心去噪：必须清除所有样式标签，防止标签字母导致竖排字数爆表、从而引发误判
+                                        const cleanLineStr = lineStr.replace(/\[\/?[a-z]+(?:=[^\]]*)?\]/gi, "");
+                                        
+                                        // 竖排字的物理总高度 = 实际可见中日韩字数 × 当前字号
+                                        const h = cleanLineStr.length * fSize;
+                                        
+                                        // 【关键坐标转换】：以气泡中心为轴，精准推算出当前列文字真实的【最顶端 topY】和【最底端 bottomY】
+                                        const topY = Math.round(rCenterY - h / 2);
+                                        const bottomY = Math.round(rCenterY + h / 2);
+                                        
+                                        // 估算当前列文字所在的 X 坐标轴（日漫习惯从右往左排）
+                                        const lineX = Math.round(rCenterX + (totalWidth / 2) - (idx * lHeight) - fSize / 2);
+
+                                        // 核心拦截门：如果字的顶边界(上出界)或底边界(下出界)直接溢出了画布，或者踩在了
+                                        // 桶填油漆桶（液体）无法蔓延到的死区（说明字已经爬出了气泡相框），则立刻拉响警报！
+                                        if (topY < 0 || bottomY >= img.height || lineX < 0 || lineX >= img.width) {
+                                            isTextOverflow = true;
+                                        } else {
+                                            if (floodVisited[topY * img.width + lineX] === 0 || floodVisited[bottomY * img.width + lineX] === 0) {
+                                                isTextOverflow = true; // 向上或向下触及气泡边界死区，判定溢出
+                                            }
+                                        }
+                                    });
+                                }
+                                procCtx.restore();
+
+                                // C. 一旦判定【真实文字墨迹】向任何边界超出了气泡，一键洗掉所有换行符拉平文本
+                                if (isTextOverflow) {
+                                    r.translation = r.translation.replace(/【BR】/g, '').replace(/\n/g, '').trim();
+                                }
+                            }
+                        }
+                        // 【传统几何覆盖分支】（未开启桶填时，依然走原汁原味的矩形逻辑）
                         const offsetDist = lineWidth * 0.45;
                         const offset = isV ? {x: offsetDist, y: 0} : {x: 0, y: -offsetDist};
 
-                        // 按照你的要求：先偏移绘制，后正位绘制
                         drawAndClip(r.lines, fillColor, offset, skipFirstOffset);
                         drawAndClip(r.lines, fillColor);
+
+                        // “填落”全列多维雷达探测
+                        let secondaryDetected = false;
+                        const extDistSecondary = lineWidth / 4;
+                        const isSecondaryEnabled = (typeof enableSecondaryExpand !== 'undefined') ? enableSecondaryExpand : false;
+
+                        if (isSecondaryEnabled) {
+                            for (let lineItem of r.lines) {
+                                const extPolySecondary = isV ? 
+                                    [lineItem[3], lineItem[2], [lineItem[2][0], lineItem[2][1] + extDistSecondary], [lineItem[3][0], lineItem[3][1] + extDistSecondary]] : 
+                                    [lineItem[1], [lineItem[1][0] + extDistSecondary, lineItem[1][1]], [lineItem[2][0] + extDistSecondary, lineItem[2][1]], lineItem[2]];
+                                
+                                if (hasOppositeColor(analysisCtx, extPolySecondary, opposite)) {
+                                    secondaryDetected = true;
+                                    break; 
+                                }
+                            }
+                        }
+
+                        if (secondaryDetected) {
+                            const offsetDistSecondary = lineWidth * 0.3;
+                            const offsetSecondary = isV ? {x: 0, y: offsetDistSecondary} : {x: offsetDistSecondary, y: 0};
+                            drawAndClip(r.lines, fillColor, offsetSecondary, false, true);
+                        }
+                        
+
                         pageChanged = true;
                     }
                 });
+                // 新增：“削蒙”核心裁剪逻辑（在单页的所有文本框扫描完毕后执行）
+                // “削蒙”高精度连通域智能裁剪逻辑
+                if (enableEraseMask && item.mask_raw && qualifiedLines.length > 0) {
+                    const maskImg = await loadMaskFromBase64(item.mask_raw);
+                    if (maskImg) {
+                        const width = img.width;
+                        const height = img.height;
 
+                        const tMaskCanvas = document.createElement('canvas');
+                        tMaskCanvas.width = width; tMaskCanvas.height = height;
+                        const tMaskCtx = tMaskCanvas.getContext('2d');
+                        tMaskCtx.drawImage(maskImg, 0, 0);
+
+                        // 1. 抓取原始蒙版的像素信息数据
+                        const maskImgData = tMaskCtx.getImageData(0, 0, width, height);
+                        const maskData = maskImgData.data;
+
+                        // 2. 隐形地图 A：渲染当前被填充的行框（红色通道占领）
+                        const qualCanvas = document.createElement('canvas');
+                        qualCanvas.width = width; qualCanvas.height = height;
+                        const qualCtx = qualCanvas.getContext('2d');
+                        qualCtx.fillStyle = 'rgb(255, 0, 0)';
+                        qualifiedLines.forEach(line => {
+                            qualCtx.beginPath();
+                            qualCtx.moveTo(line[0][0], line[0][1]);
+                            for (let k = 1; k < line.length; k++) qualCtx.lineTo(line[k][0], line[k][1]);
+                            qualCtx.closePath();
+                            qualCtx.fill();
+                        });
+                        const qualData = qualCtx.getImageData(0, 0, width, height).data;
+
+                        // 3. 隐形地图 B：渲染全页所有的行框，哪怕没被填充的也算（蓝色通道占领）
+                        const allCanvas = document.createElement('canvas');
+                        allCanvas.width = width; allCanvas.height = height;
+                        const allCtx = allCanvas.getContext('2d');
+                        allCtx.fillStyle = 'rgb(0, 0, 255)';
+                        if (item.regions) {
+                            item.regions.forEach(r => {
+                                if (r.lines) {
+                                    r.lines.forEach(line => {
+                                        allCtx.beginPath();
+                                        allCtx.moveTo(line[0][0], line[0][1]);
+                                        for (let k = 1; k < line.length; k++) allCtx.lineTo(line[k][0], line[k][1]);
+                                        allCtx.closePath();
+                                        allCtx.fill();
+                                    });
+                                }
+                            });
+                        }
+                        const allData = allCtx.getImageData(0, 0, width, height).data;
+
+                        // 4. 深度优先搜索 (DFS) 连通域扩散追踪算法
+                        const stack = [];
+                        const visited = new Uint8Array(width * height);
+
+                        // 寻找扩散起点：只要一个像素“有蒙版颜色”且“落在了当前填充行框内部”，就是污染源种子
+                        for (let y = 0; y < height; y++) {
+                            for (let x = 0; x < width; x++) {
+                                const idx = (y * width + x) * 4;
+                                if (maskData[idx + 3] > 0 && qualData[idx] > 0) {
+                                    const vIdx = y * width + x;
+                                    visited[vIdx] = 1;
+                                    stack.push(vIdx);
+                                }
+                            }
+                        }
+
+                        // 顺藤摸瓜：把所有相连的蒙版毛边像素全部揪出来标记
+                        while (stack.length > 0) {
+                            const curr = stack.pop();
+                            const cx = curr % width;
+                            const cy = Math.floor(curr / width);
+
+                            const neighbors = [
+                                {x: cx + 1, y: cy}, {x: cx - 1, y: cy},
+                                {x: cx, y: cy + 1}, {x: cx, y: cy - 1}
+                            ];
+
+                            for (const n of neighbors) {
+                                if (n.x >= 0 && n.x < width && n.y >= 0 && n.y < height) {
+                                    const nIdx = n.y * width + n.x;
+                                    if (visited[nIdx] === 0) {
+                                        const pIdx = nIdx * 4;
+                                        if (maskData[pIdx + 3] > 0) { // 邻居也是蒙版像素，视为一体
+                                            visited[nIdx] = 1;
+                                            stack.push(nIdx);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 5. 精准割除：只有“被标记为相连”且“在隐形地图B里找不到任何行框（蓝色通道为0）”的像素，才会被无情擦除
+                        for (let y = 0; y < height; y++) {
+                            for (let x = 0; x < width; x++) {
+                                const vIdx = y * width + x;
+                                if (visited[vIdx] === 1) {
+                                    const idx = vIdx * 4;
+                                    if (allData[idx + 2] === 0) { 
+                                        maskData[idx + 3] = 0; // 将溢出的非行框像素蒸发变透明
+                                    }
+                                }
+                            }
+                        }
+
+                        // 重新写回画布中保存
+                        tMaskCtx.putImageData(maskImgData, 0, 0);
+                        item.mask_raw = tMaskCanvas.toDataURL('image/png').split(',')[1];
+                        
+                        if (index === currentFileIndex) {
+                            maskCanvas.width = tMaskCanvas.width; maskCanvas.height = tMaskCanvas.height;
+                            maskCtx.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+                            maskCtx.drawImage(tMaskCanvas, 0, 0);
+                            isCanvasDirty = true;
+                        }
+                    }
+                }
                 if (pageChanged) {
                     item.paint_raw = procCanvas.toDataURL();
-                    if (i === currentFileIndex) isCanvasDirty = true;
+                    if (index === currentFileIndex) isCanvasDirty = true;
                 }
             }
+
+            // 3. 异步并发池控制阀（利用滑动窗口限制同时进行的页数）
+            let completedCount = 0;
+            const pool = [];
+
+            for (let i = 0; i < matchedFiles.length; i++) {
+                // 给低端设备每 5 页让出 50 毫秒的喘息主线程，防止高算力导致卡死
+                if (i > 0 && i % 5 === 0) await new Promise(r => setTimeout(r, 50));
+
+                // 丢入并发池后台运行
+                const task = processPageTask(matchedFiles[i], i).then(() => {
+                    completedCount++;
+                    autoFillBtnRight.innerText = `处理中 ${completedCount}/${matchedFiles.length}`;
+                });
+                pool.push(task);
+
+                // 如果当前排队处理的页面数达到了界面的“并发渲染数”上限，则挂起等待最老的一个跑完
+                if (pool.length >= CONCURRENCY_LIMIT) {
+                    await pool.shift(); 
+                }
+            }
+
+            // 等待所有残余尾款页面彻底全部收尾
+            await Promise.all(pool);
+
             autoFillBtnRight.innerText = "完成";
             setTimeout(() => { autoFillBtnRight.innerText = originalText; autoFillBtnRight.disabled = false; }, 1500);
+            
+            // 刷新显示当前视图
             loadFile(currentFileIndex);
         };
 
         /**
         * 分析多边形边缘的像素分布
         */
-        function analyzeLineEdges(ctx, points) {
+        /**
+         * [终极高精版] 全像素级全闭合边缘黑白扫描引擎
+         * 接收整页 ImageData，实现零显存交互的纯物理内存高速检索
+         */
+        /**
+         * [外扩高精版] 全像素级边缘外扩黑白扫描引擎
+         * @param {ImageData} imageData - 整页的像素矩阵
+         * @param {Array} points - 文本行框的顶点坐标数组 [[x1,y1], [x2,y2], ...]
+         */
+        function analyzeLineEdges(imageData, points) {
             const stats = { black: 0, white: 0, other: 0 };
-            const samples = 20; // 每条边采样点数
+            if (!points || points.length < 2 || !imageData) return stats;
 
+            const data = imageData.data;
+            const width = imageData.width;
+            const height = imageData.height;
+
+            // --- 【参数配置】 决定向外扩张的物理像素距离（支持小数，如 2.5 像素） ---
+            const OUTWARD_OFFSET = 3; 
+
+            // 1. 核心前置计算：求出多边形的几何质心（用来绝对判定“向外”的方向）
+            let cx = 0, cy = 0;
+            for (let i = 0; i < points.length; i++) {
+                cx += points[i][0];
+                cy += points[i][1];
+            }
+            cx /= points.length;
+            cy /= points.length;
+
+            // 2. 遍历多边形外壳的每一条物理边
             for (let i = 0; i < points.length; i++) {
                 const p1 = points[i];
                 const p2 = points[(i + 1) % points.length];
                 
-                for (let j = 0; j < samples; j++) {
-                    const x = p1[0] + (p2[0] - p1[0]) * (j / samples);
-                    const y = p1[1] + (p2[1] - p1[1]) * (j / samples);
-                    const pixel = ctx.getImageData(Math.round(x), Math.round(y), 1, 1).data;
-                    
-                    const r = pixel[0], g = pixel[1], b = pixel[2];
-                    if (r < 5 && g < 5 && b < 5) stats.black++;
-                    else if (r > 250 && g > 250 && b > 250) stats.white++;
-                    else stats.other++;
+                const dx = p2[0] - p1[0];
+                const dy = p2[1] - p1[1];
+                const len = Math.hypot(dx, dy);
+                
+                if (len === 0) continue;
+
+                // 3. 计算该边的基础单位法向量（垂直于该边）
+                let nx = -dy / len;
+                let ny = dx / len;
+
+                // 4. 方向校准：计算从“质心”指向“边中点”的向量
+                const midX = (p1[0] + p2[0]) / 2;
+                const midY = (p1[1] + p2[1]) / 2;
+                const toMidX = midX - cx;
+                const toMidY = midY - cy;
+
+                // 如果法向量与质心外指向量的点积为负，说明法线指内了，直接取反，保证 100% 朝外
+                if (nx * toMidX + ny * toMidY < 0) {
+                    nx = -nx;
+                    ny = -ny;
+                }
+
+                // 5. 全像素步进扫描（带状安全区版）
+                const steps = Math.ceil(len); 
+                for (let j = 0; j < steps; j++) {
+                    const ratio = steps > 0 ? (j / steps) : 0;
+                    const baseX = p1[0] + dx * ratio;
+                    const baseY = p1[1] + dy * ratio;
+
+                    // 额外扫描 1px、2px、3px 三层厚度，编织成密集的探测网
+                    for (let offset = 1; offset <= 3; offset++) {
+                        const x = Math.round(baseX + nx * offset);
+                        const y = Math.round(baseY + ny * offset);
+
+                        if (x >= 0 && x < width && y >= 0 && y < height) {
+                            const idx = (y * width + x) * 4;
+                            const r = data[idx]; const g = data[idx + 1]; const b = data[idx + 2];
+
+                            if (r < 5 && g < 5 && b < 5) stats.black++;
+                            else if (r > 250 && g > 250 && b > 250) stats.white++;
+                            else stats.other++;
+                        }
+                    }
                 }
             }
             return stats;
@@ -2423,12 +3069,18 @@
             }
             
             if (e.altKey && e.button === 0) {
+                e.preventDefault(); // [新增] 防止Alt划线时触发突发粘手
                 isAltSelecting = true;
                 altSelectionPath = [pos];
-                selectedItems = []; // 清空选中队列
+                selectedItems = []; 
                 viewState.isPanning = false; 
                 draw();
             } else {
+                // [核心新增]：如果是左键点击画布容器，强制阻止浏览器默认的“网页文本选择”行为
+                // 这能确保长按时绝对不会变成文字选择状态
+                if (e.button === 0) {
+                    e.preventDefault();
+                }
                 onMouseDown(e);
             }
         });
@@ -2524,7 +3176,11 @@
                 onMouseUp(e); 
             }
         });
-
+        // [彻底根治连粘] 禁用容器内所有元素（包括 Canvas 和对比图 img）的浏览器原生拖拽
+        // 这样长按移动时，浏览器绝对不会启动“拖拽文件”的鬼影图标，mouseup 信号就能 100% 正常触发
+        container.addEventListener('dragstart', (e) => {
+            e.preventDefault();
+        });
         
         window.addEventListener('resize', resizeCanvas);
         // 绑定滚轮缩放 (绑定到容器上，而不是 Canvas 上，体验更好)
@@ -2583,6 +3239,9 @@
             if (displayMode === 'comparison' && comparisonRawImg) {
                 comparisonRawImg.style.transform = transformStr;
             }
+            
+            // [新增] 只要缩放或拖拽变动坐标，立刻重算滚动条尺寸及推程位置
+            if (typeof syncMtuScrollbars === 'function') syncMtuScrollbars();
         }
 
         fontSelect.addEventListener('change', (e) => {
@@ -4659,12 +5318,25 @@
                         targetCtx.save();
                         targetCtx.filter = 'none';
                         targetCtx.fillStyle = tokStyle.color || finalFillColor;
-                        // 使用四舍五入后的坐标
-                        targetCtx.fillText(char, rdx, rdy);
+                        
+                        // 1. 无论什么字重，保底绘制第一次
+                        targetCtx.fillText(char, rdx, rdy); 
+                        
+                        // 2. 核心动态判定：只有当前字重为 "400" (常规) 时，才触发第二次加深绘制
+                        if (String(effectiveWeight) === '400') {
+                            targetCtx.fillText(char, rdx, rdy); 
+                        }
+                        
+                        // 着重号同步逻辑
                         if (tokStyle.dot && dotX !== null && dotY !== null) {
                             targetCtx.beginPath();
                             targetCtx.arc(Math.round(dotX), Math.round(dotY), currentFs * 0.1, 0, Math.PI * 2);
                             targetCtx.fill();
+                            
+                            // 如果是常规体，着重号也跟着补一刀加深
+                            if (String(effectiveWeight) === '400') {
+                                targetCtx.fill();
+                            }
                         }
                         targetCtx.restore();
                     }
@@ -5544,38 +6216,48 @@ ctx.translate(0, Math.round(charY));
         // 在 tempMatches.push 时加入 repairImage 匹配，通常根据文件名相同来匹配
         // 例如：001.jpg (原图) -> 001.png (修复图)
 
+        window.canvasFitMode = 'auto'; // 全局缩放状态：auto=全屏自适应，width=宽度自适应
+
+        window.setViewFitMode = function(mode) {
+            window.canvasFitMode = mode;
+            const btnAuto = document.getElementById('btnViewAuto');
+            const btnWidth = document.getElementById('btnViewWidth');
+            if (mode === 'width') {
+                btnWidth.classList.add('bg-blue-600', 'text-white'); btnWidth.classList.remove('text-gray-300');
+                btnAuto.classList.add('text-gray-300'); btnAuto.classList.remove('bg-blue-600', 'text-white');
+            } else {
+                btnAuto.classList.add('bg-blue-600', 'text-white'); btnAuto.classList.remove('text-gray-300');
+                btnWidth.classList.add('text-gray-300'); btnWidth.classList.remove('bg-blue-600', 'text-white');
+            }
+            resizeCanvas();
+            draw();
+        };
+
         function resizeCanvas() {
             if(!currentImage) return;
 
             const oldW = paintCanvas.width;
             const oldH = paintCanvas.height;
 
-            // 只有在尺寸真正变化时才重设，减少性能损耗
             if (oldW !== currentImage.width || oldH !== currentImage.height) {
                 mainCanvas.width = currentImage.width; 
                 mainCanvas.height = currentImage.height;
                 paintCanvas.width = currentImage.width;
                 paintCanvas.height = currentImage.height;
                 
-                // 【关键】重设尺寸后，如果内存里有涂鸦，立刻画回去
                 const item = matchedFiles[currentFileIndex];
                 if (item && item.paint_raw) {
                     const pImg = new Image();
-                    pImg.onload = () => {
-                        paintCtx.drawImage(pImg, 0, 0);
-                        draw(); // 确保文字层和涂鸦层顺序正确
-                    };
+                    pImg.onload = () => { paintCtx.drawImage(pImg, 0, 0); draw(); };
                     pImg.src = item.paint_raw;
                 }
             }
 
-            // 3. 设置对比层（v19新增）
             if(window.comparisonRawImg) {
                 comparisonRawImg.width = currentImage.width;
                 comparisonRawImg.height = currentImage.height;
             }
             
-            // 确定当前活动的容器（对比模式下是左边的 div）
             const activeContainer = (displayMode === 'comparison') ? leftCompare : document.getElementById('canvasContainer');
             const rect = activeContainer.getBoundingClientRect();
             
@@ -5585,19 +6267,29 @@ ctx.translate(0, Math.round(charY));
 
             const scaleX = availableW / currentImage.width;
             const scaleY = availableH / currentImage.height;
-            const initScale = Math.min(scaleX, scaleY) * 0.95; 
             
-            viewState.scale = initScale;
-            // 在当前容器内居中
-            viewState.x = (rect.width - currentImage.width * initScale) / 2;
-            viewState.y = (rect.height - currentImage.height * initScale) / 2;
+            // --- 核心改动：判定自适应模式 ---
+            let initScale;
+            if (window.canvasFitMode === 'width') {
+                initScale = scaleX * 0.98; // 宽度优先占满
+                viewState.scale = initScale;
+                viewState.x = (rect.width - currentImage.width * initScale) / 2;
+                viewState.y = padding / 2; // 顶格贴齐，方便纵向直接滚阅
+            } else {
+                initScale = Math.min(scaleX, scaleY) * 0.95; // 原全屏缩放逻辑
+                viewState.scale = initScale;
+                viewState.x = (rect.width - currentImage.width * initScale) / 2;
+                viewState.y = (rect.height - currentImage.height * initScale) / 2;
+            }
             
             updateCanvasTransform();
             
-            // UI Canvas 仍需覆盖整个大的 canvasContainer
             const fullContainer = document.getElementById('canvasContainer');
             uiCanvas.width = fullContainer.clientWidth;
             uiCanvas.height = fullContainer.clientHeight;
+
+            // 联动同步滚动条显示
+            if (typeof syncMtuScrollbars === 'function') syncMtuScrollbars();
         }
         function exportImage() {
             if(!currentImage) return alert("无图片");
@@ -7640,7 +8332,111 @@ ctx.translate(0, Math.round(charY));
                 draw();
             }
         });
+        // --- 虚拟滚动条计算与拖拽引擎 ---
+        function getActiveCanvasContainer() {
+            return (displayMode === 'comparison') ? document.getElementById('leftCompare') : document.getElementById('canvasContainer');
+        }
 
+        function syncMtuScrollbars() {
+            if (!currentImage) return;
+            const parent = getActiveCanvasContainer();
+            if (!parent) return;
+
+            let trackV = document.getElementById('mtu-scroll-v');
+            let trackH = document.getElementById('mtu-scroll-h');
+
+            // 1. 初始化滚动条 DOM 及拖拽行为
+            if (!trackV) {
+                trackV = document.createElement('div'); trackV.id = 'mtu-scroll-v';
+                trackV.style = 'position:absolute; right:4px; top:4px; bottom:4px; width:8px; background:rgba(31,41,55,0.2); border-radius:4px; z-index:40; display:none;';
+                const thumbV = document.createElement('div'); thumbV.id = 'mtu-scroll-v-thumb';
+                thumbV.style = 'width:100%; background:#4b5563; border-radius:4px; cursor:pointer; position:absolute; transition:background 0.15s;';
+                trackV.appendChild(thumbV);
+
+                trackH = document.createElement('div'); trackH.id = 'mtu-scroll-h';
+                trackH.style = 'position:absolute; left:4px; bottom:4px; right:4px; height:8px; background:rgba(31,41,55,0.2); border-radius:4px; z-index:40; display:none;';
+                const thumbH = document.createElement('div'); thumbH.id = 'mtu-scroll-h-thumb';
+                thumbH.style = 'height:100%; background:#4b5563; border-radius:4px; cursor:pointer; position:absolute; transition:background 0.15s;';
+                trackH.appendChild(thumbH);
+
+                setupScrollbarDrag(thumbV, 'v');
+                setupScrollbarDrag(thumbH, 'h');
+            }
+
+            // 2. 动态维护分屏切换下的父子隶属关系
+            if (trackV.parentElement !== parent) parent.appendChild(trackV);
+            if (trackH.parentElement !== parent) parent.appendChild(trackH);
+
+            const vW = parent.clientWidth; const vH = parent.clientHeight;
+            const imgW = currentImage.width * viewState.scale; const imgH = currentImage.height * viewState.scale;
+
+            // 计算跨越画布两端的绝对边界极值
+            const minX = Math.min(0, viewState.x); const maxX = Math.max(vW, viewState.x + imgW);
+            const minY = Math.min(0, viewState.y); const maxY = Math.max(vH, viewState.y + imgH);
+            const totalW = maxX - minX; const totalH = maxY - minY;
+
+            // 3. 控制显隐（若溢出或发生偏移则亮起）
+            const showV = totalH > vH + 1; const showH = totalW > vW + 1;
+            trackV.style.display = showV ? 'block' : 'none';
+            trackH.style.display = showH ? 'block' : 'none';
+
+            // 4. 精准像素映射
+            if (showV) {
+                const thumbHeight = Math.max(24, (vH / totalH) * vH);
+                const thumbTop = ((0 - minY) / totalH) * (vH - thumbHeight);
+                document.getElementById('mtu-scroll-v-thumb').style.height = `${thumbHeight}px`;
+                document.getElementById('mtu-scroll-v-thumb').style.top = `${thumbTop}px`;
+            }
+            if (showH) {
+                const thumbWidth = Math.max(24, (vW / totalW) * vW);
+                const thumbLeft = ((0 - minX) / totalW) * (vW - thumbWidth);
+                document.getElementById('mtu-scroll-h-thumb').style.width = `${thumbWidth}px`;
+                document.getElementById('mtu-scroll-h-thumb').style.left = `${thumbLeft}px`;
+            }
+        }
+
+        function setupScrollbarDrag(thumb, orientation) {
+            let isDragging = false; let startMousePos = 0; let startContentPos = 0;
+
+            thumb.onmousedown = (e) => {
+                e.preventDefault(); e.stopPropagation(); // 关键：截断拖动，防止误触发画布Pan平移
+                isDragging = true;
+                thumb.style.background = '#6b7280';
+                startMousePos = orientation === 'v' ? e.clientY : e.clientX;
+                startContentPos = orientation === 'v' ? viewState.y : viewState.x;
+
+                const onMouseMove = (moveEvent) => {
+                    if (!isDragging) return;
+                    const delta = (orientation === 'v' ? moveEvent.clientY : moveEvent.clientX) - startMousePos;
+                    const parent = getActiveCanvasContainer();
+                    const imgW = currentImage.width * viewState.scale; const imgH = currentImage.height * viewState.scale;
+                    
+                    const minX = Math.min(0, viewState.x); const maxX = Math.max(parent.clientWidth, viewState.x + imgW);
+                    const minY = Math.min(0, viewState.y); const maxY = Math.max(parent.clientHeight, viewState.y + imgH);
+
+                    if (orientation === 'v') {
+                        const trackRatio = (maxY - minY) / parent.clientHeight;
+                        viewState.y = startContentPos - (delta * trackRatio);
+                    } else {
+                        const trackRatio = (maxX - minX) / parent.clientWidth;
+                        viewState.x = startContentPos - (delta * trackRatio);
+                    }
+                    updateCanvasTransform();
+                    draw();
+                };
+
+                const onMouseUp = () => {
+                    isDragging = false; thumb.style.background = '#4b5563';
+                    window.removeEventListener('mousemove', onMouseMove);
+                    window.removeEventListener('mouseup', onMouseUp);
+                };
+                window.addEventListener('mousemove', onMouseMove);
+                window.addEventListener('mouseup', onMouseUp);
+            };
+            
+            thumb.onmouseenter = () => { if(!isDragging) thumb.style.background = '#5a6270'; };
+            thumb.onmouseleave = () => { if(!isDragging) thumb.style.background = '#4b5563'; };
+        }
         // --- 脚本末尾的初始化与检测逻辑 ---
 
         // 1. [新增] 自动检测设备内存并调整并发
