@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v19.3.10)</title>
+    <title>MTU 嵌字编辑器 (v19.3.13)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -518,6 +518,9 @@
                     <button class="rt-btn" onclick="insertTagWithParam('s', '像素或倍率', '40px')" title="字号 [s=1.2] 或 [s=40px]">[Sz]</button>
                     <button class="rt-btn" onclick="insertTagWithParam('f', '字体', 'SimSun')" title="字体 [f=SimSun]">[Fn]</button>
                     <button class="rt-btn" onclick="insertTagWithParam('r', '注音', '')" title="注音 [r=xxx]">[Ru]</button>
+                    <button class="rt-btn text-pink-400 border-pink-500/20" onclick="insertTagWithParam('st', '参数格式: 颜色,粗细(px)', '#ff0000,2')" title="局部描边：[st=#颜色,粗细]">[St]</button>
+                    <button class="rt-btn text-yellow-400 border-yellow-500/20" onclick="insertTagWithParam('g', '参数格式: 颜色,发光半径', '#00ffff,2')" title="局部发光/霓虹：[g=#颜色,发光半径]">[Gl]</button>
+                    <button class="rt-btn text-teal-400 border-teal-500/20" onclick="insertTagWithParam('os', '参数格式: 颜色,外粗细(px)', '#000000,4')" title="局部外描边(绝对不吃字)：[os=#颜色,外粗细]">[Os]</button>
                     <button class="rt-btn text-cyan-400 border-cyan-500/30" onclick="clearAllNewlines()" title="清除译文框内所有换行符">[NoBR]</button>
                     <button class="rt-btn text-red-400" onclick="clearTags()" title="清除所有标签">[Clear]</button>
                 </div>
@@ -1532,7 +1535,8 @@
                                         if (isTextOverflow) return;
                                         
                                         // 核心去噪：必须过滤掉富文本标签（如 [b][/b]），只测量真实可见文本的物理宽度
-                                        const cleanLineStr = lineStr.replace(/\[\/?[a-z]+ Mini(?:=[^\]]*)?\]/gi, "").replace(/\[\/?[a-z]+\]/gi, "");
+                                        // 升级版：既能兼容老代码的 [font Mini]，也能完美抹除新加的 [s=...], [g=...], [os=...] 等所有带参数的特效标签
+                                        const cleanLineStr = lineStr.replace(/\[\/?[a-z0-9]+(?:=[^\]]*)?\]/gi, "");
                                         const w = procCtx.measureText(cleanLineStr).width;
                                         
                                         // 根据漫画通常居中排版的特性，推算出文字左端和右端的真实 X 坐标
@@ -1556,7 +1560,7 @@
                                         if (isTextOverflow) return;
                                         
                                         // 核心去噪：必须清除所有样式标签，防止标签字母导致竖排字数爆表、从而引发误判
-                                        const cleanLineStr = lineStr.replace(/\[\/?[a-z]+(?:=[^\]]*)?\]/gi, "");
+                                        const cleanLineStr = lineStr.replace(/\[\/?[a-z0-9]+(?:=[^\]]*)?\]/gi, "");
                                         
                                         // 竖排字的物理总高度 = 实际可见中日韩字数 × 当前字号
                                         const h = cleanLineStr.length * fSize;
@@ -2874,6 +2878,22 @@
                         // 2. 在 tagName 判断逻辑循环中添加解析
                         else if (tagName === 'nk' && param) currentStyle.nextKerning = parseFloat(param);
 
+                        // [核心新增]：解析 局部描边(st)、发光(g)、外描边(os)
+                        else if (tagName === 'st' && param) { // 用 st 代替 s 避开原字号缩放标签冲突
+                            const params = param.split(',');
+                            currentStyle.strokeColor = params[0] || '#000000';
+                            currentStyle.strokeWidth = parseFloat(params[1]) || 2;
+                        }
+                        else if (tagName === 'g' && param) {
+                            const params = param.split(',');
+                            currentStyle.glowColor = params[0] || '#ff0000';
+                            currentStyle.glowBlur = parseFloat(params[1]) || 6;
+                        }
+                        else if (tagName === 'os' && param) {
+                            const params = param.split(',');
+                            currentStyle.outerStrokeColor = params[0] || '#000000';
+                            currentStyle.outerStrokeWidth = parseFloat(params[1]) || 3;
+                        }
                         styleStack.push(currentStyle);
                     } else { if (styleStack.length > 1) styleStack.pop(); }
                 } else {
@@ -2947,7 +2967,7 @@
 
         window.clearTags = function() {
             const textarea = document.getElementById('transEditArea');
-            textarea.value = textarea.value.replace(/\[\/?[a-z]+(?:=[^\]]*)?\]/gi, "");
+            textarea.value = textarea.value.replace(/\[\/?[a-z0-9]+(?:=[^\]]*)?\]/gi, "");
 
             // 【新增】手动触发 input 事件，让画面立即变回纯文本
             textarea.dispatchEvent(new Event('input'));
@@ -4790,12 +4810,22 @@
             const isStroke = onlyPass === 'stroke';
             const isInteracting = transformState.dragging || viewState.isPanning; // 是否正在交互
 
-            // 1. 如果是发光层但没开启，或者正在拖拽（为了流畅度暂时关掉发光），直接退出
-            if (isGlow && (!region.blurEnable || isInteracting)) return;
+            // 【智能判定】检查当前文本中是否存在局部特效标签（不区分大小写）
+            const txt = region.translation || "";
+            const hasLocalGlow = /\[g=/i.test(txt);
+            const hasLocalStroke = /\[st=/i.test(txt);
+            const hasLocalOuter = /\[os=/i.test(txt); // 【新增】检查有无局部外描边富文本
 
-            // 2. 如果是描边层但没开启，直接退出
+            // 1. 发光层拦截
+            if (isGlow && (!region.blurEnable || isInteracting) && !hasLocalGlow) return;
+
+            // 2. 常规描边层拦截
             const isRegionStrokeEnabled = (region.strokeEnable !== undefined) ? region.strokeEnable : activeStrokeEnabled;
-            if (isStroke && !isRegionStrokeEnabled) return;
+            if (isStroke && !isRegionStrokeEnabled && !hasLocalStroke) return; 
+
+            // 3. 【彻底补齐疏漏】外描边层智能拦截
+            const isRegionOuterEnabled = (region.outerStrokeEnable !== undefined) ? region.outerStrokeEnable : activeOuterStrokeEnabled;
+            if (isOuterStroke && !isRegionOuterEnabled && !hasLocalOuter) return; 
             // ----------------------------
 
             // [新增] 获取当前框的字重
@@ -5205,54 +5235,35 @@
             // --- 核心修复版：支持两层高斯模糊与动态字号适配 ---
             function renderPass(mode) {
                 const isGlow = mode === 'glow';
-                const isOuterStroke = mode === 'outer-stroke'; // [新增]
+                const isOuterStroke = mode === 'outer-stroke'; 
                 const isStroke = mode === 'stroke';
                 const isFill = mode === 'fill';
-                // 在 renderPass 内部定义变量
                 const useOuterConcentricFill = region.outer_fill_holes === true;
 
-
-                if (isGlow && !region.blurEnable) return;
-                if (isOuterStroke) {
-                    const enabled = (region.outerStrokeEnable !== undefined) ? region.outerStrokeEnable : activeOuterStrokeEnabled;
-                    if (!enabled) return;
-                }
-                if (isStroke && (!isRegionStrokeEnabled || finalStrokeWidthRatio <= 0)) return;
-                // 判断开关
-
+                // [优化逻辑] 解除全局开关拦截。具体是否绘制，移交到字符循环内部根据“全局开关 || 局部标签”精细裁定
                 targetCtx.save();
-
-
-                // 1. 设置连接形状
-
                 targetCtx.lineJoin = 'round';
                 targetCtx.lineCap = 'round';
-                // 【性能修复】：将 filter 从字符循环中提取到 Pass 级别
-                // 整个 Pass 只设置一次滤镜，画完所有字符再关掉
-                if (isGlow) {
-                    const blurRatio = region.blurSizeRatio || 0.1;
-                    targetCtx.filter = `blur(${baseFontSize * blurRatio}px)`;
-                    targetCtx.strokeStyle = region.blurColor || "#000000";
-                } else {
-                    targetCtx.filter = 'none';
-                }
 
-                // 定义内部绘制工具，增加 currentFs 参数，默认为基准字号
-                // 找到 executeDraw 定义，修改如下：
                 const executeDraw = (char, dx, dy, tokStyle, dotX = null, dotY = null, currentFs = baseFontSize) => {
-                    // 对基础坐标进行四舍五入
                     const rdx = Math.round(dx);
                     const rdy = Math.round(dy);
-                    
-                    const blurRatio = region.blurSizeRatio || 0.1;
-                    const blurPx = currentFs * blurRatio; 
 
+                    // -------------------------------------------------------------
+                    // 1. 发光层 Pass (Glow)
+                    // -------------------------------------------------------------
                     if (isGlow) {
+                        // 判定：只有开启了全局发光，或者当前字符带有局部发光标签时才允许下笔
+                        if (!region.blurEnable && !tokStyle.glowColor) return;
+
                         targetCtx.save();
+                        // 优先采用局部发光的模糊半径，否则走全局
+                        const blurRatio = tokStyle.glowColor ? (tokStyle.glowBlur / currentFs) : (region.blurSizeRatio || 0.1);
+                        const blurPx = currentFs * blurRatio; 
+                        
                         targetCtx.filter = `blur(${blurPx}px)`; 
-                        targetCtx.strokeStyle = region.blurColor || "#000000";
+                        targetCtx.strokeStyle = tokStyle.glowColor || region.blurColor || "#000000";
                         targetCtx.lineWidth = currentFs * 0.1 + (blurPx * 2); 
-                        // 使用四舍五入后的坐标
                         targetCtx.strokeText(char, rdx, rdy); 
                         
                         if (tokStyle.dot && dotX !== null && dotY !== null) {
@@ -5262,39 +5273,46 @@
                         }
                         targetCtx.restore();
                     }
+                    // -------------------------------------------------------------
+                    // 2. 外描边层 Pass (Outer Stroke)
+                    // -------------------------------------------------------------
                     else if (isOuterStroke) {
-                        targetCtx.save();
-                        targetCtx.filter = 'none'; // 外描边通常不带模糊，保持锐利
-                        targetCtx.strokeStyle = region.outerStrokeColor || activeOuterStrokeColor;
-                        
-                        // 获取外描边的总宽度（倍率 * 字号）
-                        const maxW = currentFs * (region.outerStrokeWidthRatio !== undefined ? region.outerStrokeWidthRatio : activeOuterStrokeWidth);
+                        const globalOuterEnabled = (region.outerStrokeEnable !== undefined) ? region.outerStrokeEnable : activeOuterStrokeEnabled;
+                        if (!globalOuterEnabled && !tokStyle.outerStrokeColor) return;
 
-                        if (useOuterConcentricFill) {
-                            // --- 填孔模式：由粗到细多次叠加 ---
-                            const step = Math.max(0.5, currentFs * 0.05); // 设置步进，确保覆盖严密
+                        targetCtx.save();
+                        targetCtx.filter = 'none';
+                        targetCtx.strokeStyle = tokStyle.outerStrokeColor || region.outerStrokeColor || activeOuterStrokeColor;
+                        
+                        // 算出物理外拓宽度（局部配置采用绝对像素，全局配置采用字号比例）
+                        const maxW = tokStyle.outerStrokeColor ? (tokStyle.outerStrokeWidth * 2) : (currentFs * (region.outerStrokeWidthRatio !== undefined ? region.outerStrokeWidthRatio : activeOuterStrokeWidth));
+                        
+                        // 局部标签默认采用利落的高级实体描边，如未触发标签则执行全局“外填孔”
+                        if (useOuterConcentricFill && !tokStyle.outerStrokeColor) {
+                            const step = Math.max(0.5, currentFs * 0.05);
                             for (let w = maxW; w > 0; w -= step) {
                                 targetCtx.lineWidth = w;
                                 targetCtx.strokeText(char, rdx, rdy);
                             }
                         } else {
-                            // --- 普通模式：直接画一层 ---
                             targetCtx.lineWidth = maxW;
                             targetCtx.strokeText(char, rdx, rdy);
                         }
-                        
                         targetCtx.restore();
                     }
+                    // -------------------------------------------------------------
+                    // 3. 常规描边层 Pass (Stroke)
+                    // -------------------------------------------------------------
                     else if (isStroke) {
+                        if (!isRegionStrokeEnabled && !tokStyle.strokeColor) return;
+
                         targetCtx.save();
                         targetCtx.filter = 'none';
-
-                        targetCtx.lineJoin =  'round'; 
-                        targetCtx.lineCap = 'round';
-                        targetCtx.strokeStyle = finalStrokeColor;
+                        targetCtx.strokeStyle = tokStyle.strokeColor || finalStrokeColor;
                         
-                        if (useConcentricFill) {
-                            const maxW = currentFs * finalStrokeWidthRatio;
+                        const maxW = tokStyle.strokeColor ? tokStyle.strokeWidth : (currentFs * finalStrokeWidthRatio);
+
+                        if (useConcentricFill && !tokStyle.strokeColor) {
                             const step = Math.max(0.5, currentFs * 0.05);
                             for (let w = maxW; w > 0; w -= step) { 
                                 targetCtx.lineWidth = w; 
@@ -5302,37 +5320,37 @@
                             }
                             targetCtx.fillText(char, rdx, rdy);
                         } else {
-                            targetCtx.lineWidth = currentFs * finalStrokeWidthRatio;
+                            targetCtx.lineWidth = maxW;
                             targetCtx.strokeText(char, rdx, rdy);
                         }
 
                         if (tokStyle.dot && dotX !== null && dotY !== null) {
                             targetCtx.beginPath();
                             targetCtx.arc(Math.round(dotX), Math.round(dotY), currentFs * 0.1, 0, Math.PI * 2);
-                            targetCtx.lineWidth = currentFs * finalStrokeWidthRatio;
+                            targetCtx.lineWidth = maxW;
                             targetCtx.stroke();
                         }
                         targetCtx.restore();
                     }
+                    // -------------------------------------------------------------
+                    // 4. 文字填充层 Pass (Fill)
+                    // -------------------------------------------------------------
                     else if (isFill) {
                         targetCtx.save();
                         targetCtx.filter = 'none';
                         targetCtx.fillStyle = tokStyle.color || finalFillColor;
                         
-                        // 1. 无论什么字重，保底绘制第一次
-                        targetCtx.fillText(char, rdx, rdy); 
-                        
-                        // 2. 核心动态判定：只有当前字重为 "400" (常规) 时，才触发第二次加深绘制
+                        // 绘制文字主体
+                        targetCtx.fillText(char, rdx, rdy);
                         if (String(effectiveWeight) === '400') {
-                            targetCtx.fillText(char, rdx, rdy); 
+                            targetCtx.fillText(char, rdx, rdy); // 常规字重二次叠加机制
                         }
                         
-                        // 着重号同步逻辑
                         if (tokStyle.dot && dotX !== null && dotY !== null) {
                             targetCtx.beginPath();
                             targetCtx.arc(Math.round(dotX), Math.round(dotY), currentFs * 0.1, 0, Math.PI * 2);
                             targetCtx.fill();
-                            
+ 
                             // 如果是常规体，着重号也跟着补一刀加深
                             if (String(effectiveWeight) === '400') {
                                 targetCtx.fill();
@@ -5486,51 +5504,59 @@
                                     if (m.style.rotation) targetCtx.rotate(m.style.rotation * Math.PI / 180);
 
                                     // --- 渲染层 (复刻 MTU 原版逻辑) ---
+                                    // =========================================================
+                                    // --- 纵中横模块(TCY) 内部富文本串联渲染层 ---
+                                    // =========================================================
                                     if (isGlow) {
-                                        const blurPx = m.fSize * (region.blurSizeRatio || 0.1);
-                                        targetCtx.filter = `blur(${blurPx}px)`; 
-                                        targetCtx.strokeStyle = region.blurColor || "#000000";
-                                        targetCtx.lineWidth = m.fSize * 0.1 + (blurPx * 2); 
-                                        targetCtx.strokeText(m.char, 0, 0);
-                                    } 
-                                    // --- 新增：外描边分支 ---(在 tok.isGroup 循环内部)
-                                    else if (isOuterStroke) {
-                                        targetCtx.filter = 'none';
-                                        targetCtx.strokeStyle = region.outerStrokeColor || activeOuterStrokeColor;
-                                        
-                                        // 计算总宽度
-                                        const maxW = m.fSize * (region.outerStrokeWidthRatio !== undefined ? region.outerStrokeWidthRatio : activeOuterStrokeWidth);
-
-                                        // 【修复核心】：同步“外填孔”逻辑到 TCY 块
-                                        if (region.outer_fill_holes === true) {
-                                            const step = Math.max(0.5, m.fSize * 0.05);
-                                            for (let w = maxW; w > 0; w -= step) {
-                                                targetCtx.lineWidth = w;
-                                                targetCtx.strokeText(m.char, 0, 0);
-                                            }
-                                        } else {
-                                            targetCtx.lineWidth = maxW;
+                                        if (region.blurEnable || m.style.glowColor) {
+                                            const blurRatio = m.style.glowColor ? (m.style.glowBlur / m.fSize) : (region.blurSizeRatio || 0.1);
+                                            const blurPx = m.fSize * blurRatio;
+                                            targetCtx.filter = `blur(${blurPx}px)`; 
+                                            targetCtx.strokeStyle = m.style.glowColor || region.blurColor || "#000000";
+                                            targetCtx.lineWidth = m.fSize * 0.1 + (blurPx * 2); 
                                             targetCtx.strokeText(m.char, 0, 0);
                                         }
+                                    } 
+                                    else if (isOuterStroke) {
+                                        const globalOuterEnabled = (region.outerStrokeEnable !== undefined) ? region.outerStrokeEnable : activeOuterStrokeEnabled;
+                                        if (globalOuterEnabled || m.style.outerStrokeColor) {
+                                            targetCtx.filter = 'none';
+                                            targetCtx.strokeStyle = m.style.outerStrokeColor || region.outerStrokeColor || activeOuterStrokeColor;
+                                            const maxW = m.style.outerStrokeColor ? (m.style.outerStrokeWidth * 2) : (m.fSize * (region.outerStrokeWidthRatio !== undefined ? region.outerStrokeWidthRatio : activeOuterStrokeWidth));
+                                            if (region.outer_fill_holes === true && !m.style.outerStrokeColor) {
+                                                const step = Math.max(0.5, m.fSize * 0.05);
+                                                for (let w = maxW; w > 0; w -= step) {
+                                                    targetCtx.lineWidth = w;
+                                                    targetCtx.strokeText(m.char, 0, 0);
+                                                }
+                                            } else {
+                                                targetCtx.lineWidth = maxW;
+                                                targetCtx.strokeText(m.char, 0, 0);
+                                            }
+                                        }
                                     }
-                                    // ----------------------
                                     else if (isStroke) {
-                                        targetCtx.filter = 'none';
-                                        targetCtx.strokeStyle = finalStrokeColor;
-                                        if (useConcentricFill) {
-                                            const maxW = m.fSize * finalStrokeWidthRatio;
-                                            const step = Math.max(0.5, m.fSize * 0.05);
-                                            for (let w = maxW; w > 0; w -= step) { targetCtx.lineWidth = w; targetCtx.strokeText(m.char, 0, 0); }
-                                            targetCtx.fillText(m.char, 0, 0);
-                                        } else {
-                                            targetCtx.lineWidth = m.fSize * finalStrokeWidthRatio;
-                                            targetCtx.strokeText(m.char, 0, 0);
+                                        if (isRegionStrokeEnabled || m.style.strokeColor) {
+                                            targetCtx.filter = 'none';
+                                            targetCtx.strokeStyle = m.style.strokeColor || finalStrokeColor;
+                                            const maxW = m.style.strokeColor ? m.style.strokeWidth : (m.fSize * finalStrokeWidthRatio);
+                                            if (useConcentricFill && !m.style.strokeColor) {
+                                                const step = Math.max(0.5, m.fSize * 0.05);
+                                                for (let w = maxW; w > 0; w -= step) { targetCtx.lineWidth = w; targetCtx.strokeText(m.char, 0, 0); }
+                                                targetCtx.fillText(m.char, 0, 0);
+                                            } else {
+                                                targetCtx.lineWidth = maxW;
+                                                targetCtx.strokeText(m.char, 0, 0);
+                                            }
                                         }
                                     } 
                                     else if (isFill) {
                                         targetCtx.filter = 'none';
                                         targetCtx.fillStyle = m.style.color || finalFillColor;
                                         targetCtx.fillText(m.char, 0, 0);
+                                        if (String(effectiveWeight) === '400') {
+                                            targetCtx.fillText(m.char, 0, 0); // 保持双层常规字重加深
+                                        }
                                     }
 
                                     targetCtx.restore();
