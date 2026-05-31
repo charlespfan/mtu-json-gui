@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v19.3.13)</title>
+    <title>MTU 嵌字编辑器 (v19.4.14)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -473,6 +473,11 @@
                         </label>
                     </div>
                 </div>
+                <div class="w-px h-6 bg-gray-600 mx-1"></div>
+                <label class="flex items-center gap-1 text-xs text-gray-400 cursor-pointer"  title="空间 3D 透视 (选中单框时点击该项，会出现可自由拖拽的紫框，通过拖拽可让文字形状自由透视变化 )">
+                    <input type="checkbox" id="perspectiveEnableCb" class="accent-purple-600" title="空间 3D 透视 (选中单框时点击该项，会出现可自由拖拽的紫框，通过拖拽可让文字形状自由透视变化 )">
+                    空间 3D 透视
+                </label>
             </div>
         </div>
 
@@ -614,6 +619,7 @@
             </div>
             
             <canvas id="mainCanvas"></canvas>
+            <div id="perspectiveTextLayer" style="position: absolute; top: 0; left: 0; width: 0; height: 0; pointer-events: none; transform-origin: 0 0; z-index: 10;"></div>
             <canvas id="uiCanvas" class="absolute top-0 left-0 pointer-events-none z-20"></canvas>
         </div>
         <div class="w-12 bg-gray-900 border-l border-gray-700 flex flex-col items-center py-3 gap-3 z-10 shadow-xl overflow-y-auto">
@@ -908,6 +914,7 @@
 
         let enableShapeWrap = false;       // 新增：是否开启“形排”智能换行，默认关闭
 
+        let draggingPointIdx = -1; // 【新增】用于记录当前鼠标正在拖拽 3D 框的哪一个顶点（0:左上, 1:右上, 2:右下, 3:左下）
 
 
 
@@ -1061,9 +1068,260 @@
         const paintOpacityValue = document.getElementById('paintOpacityValue');
 
 
+        document.getElementById('perspectiveEnableCb').addEventListener('change', (e) => {
+            if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
+                const r = regions[activeRegionIndex];
+                r.isPerspective = e.target.checked;
 
+                // 如果首次开启，根据当前的常规矩形 box 自动初始化 4 个顶点的 3D 控制点
+                if (r.isPerspective && !r.points) {
+                    const [x1, y1, x2, y2] = r.box;
+                    r.points = [
+                        { x: x1, y: y1 }, // p0: 左上
+                        { x: x2, y: y1 }, // p1: 右上
+                        { x: x2, y: y2 }, // p2: 右下
+                        { x: x1, y: y2 }  // p3: 左下
+                    ];
+                }
+                draw(); // 刷新渲染
+            }
+        });
 
+        // 【核心数学引擎】通过 4 个不规则顶点坐标，反推解出 CSS3 所需的 matrix3d 16位矩阵
+        function getPerspectiveMatrix3D(w, h, p0, p1, p2, p3) {
+            const x0 = p0.x, y0 = p0.y;
+            const x1 = p1.x, y1 = p1.y;
+            const x2 = p2.x, y2 = p2.y;
+            const x3 = p3.x, y3 = p3.y;
 
+            const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3;
+            const dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+
+            let a, b, c, d, e, f, g, h_val;
+
+            if (dx3 === 0 && dy3 === 0) {
+                a = x1 - x0; b = x3 - x0; c = x0;
+                d = y1 - y0; e = y3 - y0; f = y0;
+                g = 0; h_val = 0;
+            } else {
+                const det = dx1 * dy2 - dx2 * dy1;
+                if (det === 0) return null;
+                g = (dx3 * dy2 - dx2 * dy3) / det;
+                h_val = (dx1 * dy3 - dx3 * dy1) / det;
+                a = x1 - x0 + g * x1;
+                b = x3 - x0 + h_val * x3;
+                c = x0;
+                d = y1 - y0 + g * y1;
+                e = y3 - y0 + h_val * y3;
+                f = y0;
+            }
+
+            // 将 3x2 齐次矩阵映射转化为 4x4 的 matrix3d 标准数组格式
+            return [
+                a / w, d / w, 0, g / w,
+                b / h, e / h, 0, h_val / h,
+                0, 0, 1, 0,
+                c, f, 0, 1
+            ];
+        }
+        /**
+         * 【专属后端烘焙引擎】
+         * 作用：在导出单图/批量图片时，将扁平富文本渲染结果通过非线性单应性投影，完美拓印到离屏画布上
+         */
+        /**
+         * 【无缝完美烘焙引擎】
+         * 修复了亚像素抗锯齿导致的网格缝隙线问题
+         */
+        /**
+         * 【终极无缝完美烘焙引擎 v2.0】
+         * 原理：像素级逆向单应性变换 + 双线性插值抗锯齿
+         * 优点：彻底根除网格线、锯齿、缝隙，画质达到 Photoshop 级纯净度
+         */
+        /**
+         * 【终极无缝完美烘焙引擎 v2.1 - 完美抗色散版】
+         * 原理：像素级逆向单应性变换 + 预乘 Alpha 双线性插值
+         * 优点：彻底根除网格线、拉伸锯齿，并完美解决白字边缘发黑/发灰的 Alpha 污染问题
+         */
+        /**
+         * 【终极无缝全景弹性烘焙引擎 v2.4 - 终极防御版】
+         * 原理：逆向单应性映射 + 预乘 Alpha 抗色散 + 屏幕空间包围盒安全外扩 (Safe Screen Bound Expansion)
+         * 优点：彻底解决了大行距、长文本导致向前投影撞击“3D 消失线”引发的函数崩溃、文字完全不显示的问题！
+         */
+        /**
+         * 【终极无缝全景弹性烘焙引擎 v2.5 - 4倍矢量高清版】
+         * 原理：逆向单应性映射 + 预乘 Alpha 抗色散 + 屏幕安全外扩 + 4倍高清矢量超采样 (4x Vector Supersampling)
+         * 优点：彻底攻克 3D 文字拉大或高分辨率输出时文字边缘发软、发虚的通病，提供刀锋般锐利的顶级印刷画质！
+         */
+        function bakePerspectiveTextToOfflineCanvas(region, targetCtx) {
+            const [x1, y1, x2, y2] = region.box;
+            const origW = Math.abs(x2 - x1) || 100;
+            const origH = Math.abs(y2 - y1) || 50;
+
+            // =========================================================================
+            // 1. 动态体积测量引擎
+            // =========================================================================
+            const fs = region.font_size || 20;
+            const currentLineSpacing = (region.line_spacing !== undefined) ? region.line_spacing : (typeof activeLineSpacing !== 'undefined' ? activeLineSpacing : 1.2);
+            const currentLetterSpacing = (region.letter_spacing !== undefined) ? region.letter_spacing : (typeof activeLetterSpacing !== 'undefined' ? activeLetterSpacing : 0);
+            const lineCount = (region.translation || "").split(/【BR】|\n/).length || 1;
+
+            const filterBuffer = Math.ceil(
+                fs * (region.blurSizeRatio || 0.1) * 3 + 
+                fs * (region.strokeWidthRatio || 0.5) * 5 + 60
+            );
+            const accordionBuffer = Math.ceil(
+                lineCount * fs * (Math.max(currentLineSpacing, 1.2)) + 
+                (region.translation || "").length * fs * Math.abs(currentLetterSpacing)
+            );
+
+            const P = filterBuffer + accordionBuffer; // 弹性留白半径
+
+            // =========================================================================
+            // 【核心超级加成】：引入 4 倍超采样机械齿轮，强行拉高后台底稿的图像密度
+            // =========================================================================
+            const SCALE = 4; 
+            const flatW = Math.ceil((origW + 2 * P) * SCALE);
+            const flatH = Math.ceil((origH + 2 * P) * SCALE);
+
+            // 2. 创建 4 倍扩容后的超高清临时画布
+            const flatCanvas = document.createElement('canvas');
+            flatCanvas.width = flatW;
+            flatCanvas.height = flatH;
+            const flatCtx = flatCanvas.getContext('2d');
+
+            const shadowRegion = JSON.parse(JSON.stringify(region));
+            shadowRegion.isPerspective = false;
+            shadowRegion.box = [0, 0, origW, origH]; 
+            shadowRegion.angle = 0;                  
+
+            // 💥 施展图形学魔法：先平移留白，再强行放大 4 倍坐标系！
+            // 此时底下的 drawSmartTranslation 渲染文字时，系统字体引擎会直接吐出高密度的高清矢量字
+            flatCtx.save();
+            flatCtx.scale(SCALE, SCALE); 
+            flatCtx.translate(P, P);
+            drawSmartTranslation(shadowRegion, 'glow', flatCtx);
+            drawSmartTranslation(shadowRegion, 'outer-stroke', flatCtx);
+            drawSmartTranslation(shadowRegion, 'stroke', flatCtx);
+            drawSmartTranslation(shadowRegion, 'fill', flatCtx);
+            flatCtx.restore();
+
+            // 提取这块 4 倍超高清的像素级底稿矩阵
+            const srcImgData = flatCtx.getImageData(0, 0, flatW, flatH);
+            // =========================================================================
+
+            // 3. 提取 4 个原本的绝对目标像素控制点坐标
+            const p0 = region.points[0], p1 = region.points[1], p2 = region.points[2], p3 = region.points[3];
+            const x0 = p0.x, y0 = p0.y;
+            const rx1 = p1.x, ry1 = p1.y;
+            const rx2 = p2.x, ry2 = p2.y;
+            const rx3 = p3.x, ry3 = p3.y;
+
+            // 4. 计算正向投影齐次系数
+            const dx1 = rx1 - rx2, dx2 = rx3 - rx2, dx3 = x0 - rx1 + rx2 - rx3;
+            const dy1 = ry1 - ry2, dy2 = ry3 - ry2, dy3 = y0 - ry1 + ry2 - ry3;
+            const det = dx1 * dy2 - dx2 * dy1;
+            if (Math.abs(det) < 0.0001) return; 
+
+            const g = (dx3 * dy2 - dx2 * dy3) / det;
+            const h_val = (dx1 * dy3 - dx3 * dy1) / det;
+            const a = rx1 - x0 + g * rx1;
+            const b = rx3 - x0 + h_val * rx3;
+            const c = x0;
+            const d = ry1 - y0 + g * ry1;
+            const e = ry3 - y0 + h_val * ry3;
+            const f = y0;
+
+            // 5. 求取高精逆向映射解算矩阵
+            const inv0 = e - f * h_val; const inv1 = c * h_val - b;     const inv2 = b * f - c * e;
+            const inv3 = f * g - d;     const inv4 = a - c * g;         const inv5 = c * d - a * f;
+            const inv6 = d * h_val - e * g; const inv7 = b * g - a * h_val; const inv8 = a * e - b * d;
+
+            const mInverseDet = a * inv0 + b * inv3 + c * inv6;
+            if (Math.abs(mInverseDet) < 0.0001) return;
+
+            // 6. 安全屏幕包围盒计算
+            const minX = Math.floor(Math.min(x0, rx1, rx2, rx3)) - P;
+            const maxX = Math.ceil(Math.max(x0, rx1, rx2, rx3)) + P;
+            const minY = Math.floor(Math.min(y0, ry1, ry2, ry3)) - P;
+            const maxY = Math.ceil(Math.max(y0, ry1, ry2, ry3)) + P;
+
+            const destW = maxX - minX;
+            const destH = maxY - minY;
+            if (destW <= 0 || destH <= 0) return; 
+
+            const destImgData = targetCtx.createImageData(destW, destH);
+            const dData = destImgData.data;
+            const sData = srcImgData.data;
+
+            // 7. 预乘 Alpha 双线性采样器（内部宽边界完美对齐 flatW）
+            const sampleBilinear = (uSrc, vSrc) => {
+                const u0 = Math.floor(uSrc);
+                const v0 = Math.floor(vSrc);
+                const u1 = Math.min(u0 + 1, flatW - 1);
+                const v1 = Math.min(v0 + 1, flatH - 1);
+
+                const wu1 = uSrc - u0; const wu0 = 1 - wu1;
+                const wv1 = vSrc - v0; const wv0 = 1 - wv1;
+
+                const idx00 = (v0 * flatW + u0) * 4;
+                const idx10 = (v0 * flatW + u1) * 4;
+                const idx01 = (v1 * flatW + u0) * 4;
+                const idx11 = (v1 * flatW + u1) * 4;
+
+                const r00 = sData[idx00], g00 = sData[idx00+1], b00 = sData[idx00+2], a00 = sData[idx00+3];
+                const r10 = sData[idx10], g10 = sData[idx10+1], b10 = sData[idx10+2], a10 = sData[idx10+3];
+                const r01 = sData[idx01], g01 = sData[idx01+1], b01 = sData[idx01+2], a01 = sData[idx01+3];
+                const r11 = sData[idx11], g11 = sData[idx11+1], b11 = sData[idx11+2], a11 = sData[idx11+3];
+
+                const w00 = wu0 * wv0; const w10 = wu1 * wv0;
+                const w01 = wu0 * wv1; const w11 = wu1 * wv1;
+
+                const blendedA = w00 * a00 + w10 * a10 + w01 * a01 + w11 * a11;
+                if (blendedA <= 0) return { r: 0, g: 0, b: 0, a: 0 };
+
+                const blendedR = w00 * r00 * a00 + w10 * r10 * a10 + w01 * r01 * a01 + w11 * r11 * a11;
+                const blendedG = w00 * g00 * a00 + w10 * g10 * a10 + w01 * g01 * a01 + w11 * g11 * a11;
+                const blendedB = w00 * b00 * a00 + w10 * b10 * a10 + w01 * b01 * a01 + w11 * b11 * a11;
+
+                return {
+                    r: blendedR / blendedA,
+                    g: blendedG / blendedA,
+                    b: blendedB / blendedA,
+                    a: blendedA
+                };
+            };
+
+            // 8. 逆向像素扫描
+            for (let y = minY; y < maxY; y++) {
+                for (let x = minX; x < maxX; x++) {
+                    const wSpace = inv6 * x + inv7 * y + inv8;
+                    if (wSpace <= 0.0001) continue;
+
+                    const u = ((inv0 * x + inv1 * y + inv2) / wSpace) * origW;
+                    const v = ((inv3 * x + inv4 * y + inv5) / wSpace) * origH;
+
+                    if (u >= -P && u < origW + P && v >= -P && v < origH + P) {
+                        // 💥 【关键修改】：反向索引采样时，映射点必须乘以 SCALE 缩放系数！
+                        // 从而强迫目标像素精准咬合住 4 倍密度底稿里饱满的高清矢量细节。
+                        const color = sampleBilinear((u + P) * SCALE, (v + P) * SCALE);
+                        const dIdx = ((y - minY) * destW + (x - minX)) * 4;
+
+                        dData[dIdx]     = color.r;
+                        dData[dIdx + 1] = color.g;
+                        dData[dIdx + 2] = color.b;
+                        dData[dIdx + 3] = color.a;
+                    }
+                }
+            }
+
+            // 9. 图层贴纸融合
+            const stampCanvas = document.createElement('canvas');
+            stampCanvas.width = destW;
+            stampCanvas.height = destH;
+            stampCanvas.getContext('2d').putImageData(destImgData, 0, 0);
+
+            targetCtx.drawImage(stampCanvas, minX, minY);
+        }
         // 绑定形排组件的监听器
         document.getElementById('enableShapeWrapCb').addEventListener('change', (e) => {
             enableShapeWrap = e.target.checked;
@@ -3754,7 +4012,53 @@
             // --- 1. 手柄操作优先级最高 ---
             if (activeRegionIndex !== -1) {
                 const region = regions[activeRegionIndex]; // 必须先定义 region
-                
+
+                // =============================================================
+                // 【核心新增】：3D 透视框顶点小方块碰撞点击检测
+                // =============================================================
+                // =============================================================
+                // 【升级版】：3D 透视框（4角 + 4边中点）碰撞点击检测
+                // =============================================================
+                if (region.isPerspective && region.points) {
+                    const clickRadius = 12 / viewState.scale; 
+                    
+                    // A. 优先检测是否点中了 4 个角 (0, 1, 2, 3)
+                    for (let i = 0; i < 4; i++) {
+                        const dist = Math.hypot(pos.x - region.points[i].x, pos.y - region.points[i].y);
+                        if (dist < clickRadius) {
+                            draggingPointIdx = i; 
+                            transformState.dragging = true;
+                            transformState.action = 'move-3d-point';
+                            
+                            // 【核心防漂移】：暗中记录按下鼠标那一刻的初始坐标和全框定点快照
+                            transformState.startMouse = { x: pos.x, y: pos.y };
+                            transformState.startPoints = JSON.parse(JSON.stringify(region.points));
+                            return; 
+                        }
+                    }
+
+                    // B. 其次检测是否点中了 4 条边的中心点 (4:顶边, 5:右边, 6:底边, 7:左边)
+                    for (let i = 0; i < 4; i++) {
+                        const next = (i + 1) % 4;
+                        const midX = (region.points[i].x + region.points[next].x) / 2;
+                        const midY = (region.points[i].y + region.points[next].y) / 2;
+                        
+                        const dist = Math.hypot(pos.x - midX, pos.y - midY);
+                        if (dist < clickRadius) {
+                            draggingPointIdx = i + 4; // 赋予专属边控制代号 4, 5, 6, 7
+                            transformState.dragging = true;
+                            transformState.action = 'move-3d-point';
+                            
+                            // 记录拖拽边的初始快照
+                            transformState.startMouse = { x: pos.x, y: pos.y };
+                            transformState.startPoints = JSON.parse(JSON.stringify(region.points));
+                            return;
+                        }
+                    }
+                }
+                // =============================================================
+                // =============================================================
+
                 // 【译文模式手柄检测】
                 if (displayMode === 'translation' || displayMode === 'comparison') { // 加上对比模式
                     const handles = getRegionHandles(region);
@@ -3952,7 +4256,45 @@
 
             if (transformState.dragging && activeRegionIndex !== -1) {
                 const region = regions[activeRegionIndex];
-                
+
+                // =============================================================
+                // 【核心新增】：3D 顶点控制点拖拽位移刷新
+                // =============================================================
+                // =============================================================
+                // 【升级版】：3D 顶点 / 4边平行拖拽位移刷新
+                // =============================================================
+                if (transformState.action === 'move-3d-point' && draggingPointIdx !== -1) {
+                    // 算出鼠标相较于按下那一刻，在空间里移动了多少绝对像素点
+                    const dx = pos.x - transformState.startMouse.x;
+                    const dy = pos.y - transformState.startMouse.y;
+
+                    if (draggingPointIdx < 4) {
+                        // 【模式 A】：拖拽单个角，只让当前角移动
+                        region.points[draggingPointIdx] = {
+                            x: transformState.startPoints[draggingPointIdx].x + dx,
+                            y: transformState.startPoints[draggingPointIdx].y + dy
+                        };
+                    } else {
+                        // 【模式 B】：拖拽边中心点，让组成该条边的两个端点同时跟着鼠标等量平行移动！
+                        const idxA = draggingPointIdx - 4;      // 端点 A（例如 4-4 = 0）
+                        const idxB = (idxA + 1) % 4;             // 端点 B（例如 0+1 = 1）
+
+                        region.points[idxA] = {
+                            x: transformState.startPoints[idxA].x + dx,
+                            y: transformState.startPoints[idxA].y + dy
+                        };
+                        region.points[idxB] = {
+                            x: transformState.startPoints[idxB].x + dx,
+                            y: transformState.startPoints[idxB].y + dy
+                        };
+                    }
+                    
+                    draw();   // 强制刷新
+                    return;   // 拦截
+                }
+                // =============================================================
+                // =============================================================
+
                 // 1. 移动小框
                 if (transformState.action === 'move-line') {
                     const line = region.lines[transformState.lineIndex];
@@ -4200,6 +4542,15 @@
 
 
         function onMouseUp() {
+            // =============================================================
+            // 【核心新增】：松开左键时释放 3D 顶点控制锁
+            // =============================================================
+            draggingPointIdx = -1; 
+            // =============================================================
+
+            // 原有的平移/拖拽停止逻辑
+            viewState.isPanning = false;
+
             // --- 新增：停止蒙版涂抹 ---
             if (isMaskDragging) {
                 isMaskDragging = false;
@@ -4279,6 +4630,17 @@
         }
 
         function draw() {
+            // 在 draw() 里面加入：联动更新 3D 悬浮层的缩放和平移状态
+            // 【精准对齐版】联动更新 3D 悬浮层的缩放和平移状态
+            function syncPerspectiveLayer() {
+                const layer = document.getElementById('perspectiveTextLayer');
+                if (!layer) return;
+                
+                // 将原本的 viewState.offsetX / Y 修正为源码真正的 viewState.x / y
+                layer.style.transform = `translate(${viewState.x}px, ${viewState.y}px) scale(${viewState.scale})`;
+            }
+            syncPerspectiveLayer(); // 每次画布重绘，悬浮层就自动强制对齐一次
+
             if (isPageLoading) {
                 ctx.fillStyle = "#111827"; // 背景色
                 ctx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
@@ -4412,7 +4774,7 @@
                 const active = (i === activeRegionIndex);
                 const isMultiSelected = selectedRegions.includes(i); // 是否在多选列表中
 
-                if (r.box && showBlocks) {
+                if (r.box && showBlocks && !r.isPerspective) {
                     ctx.save();
                     const [x1, y1, x2, y2] = r.box;
                     const w = x2 - x1, h = y2 - y1;
@@ -4606,7 +4968,7 @@
                 // 只有当前选中的区域才显示操作手柄
                 if (active) {
                     // 译文模式显示大框手柄
-                    if (displayMode !== 'original') {
+                    if (displayMode !== 'original' && !r.isPerspective) {
                         drawHandles(r); 
                     }
                     
@@ -4654,6 +5016,99 @@
                 ctx.restore();
             }
 
+            // 在 draw() 的最后面更新 DOM 文字节点
+            // 【终极重构】：双层 Flexbox 几何中心对齐引擎，解决操作端与导出成图的对齐差异
+            // 【重心校正版】：彻底修复竖排不垂直居中、横排微小视觉偏上的排版 Bug
+            function renderDOMPerspectiveTexts() {
+                const container = document.getElementById('perspectiveTextLayer');
+                if (!container) return;
+                container.innerHTML = ''; // 清空上一帧
+
+                regions.forEach((r, idx) => {
+                    if (!r.isPerspective || !r.points) return;
+
+                    const [x1, y1, x2, y2] = r.box;
+                    const origW = Math.abs(x2 - x1) || 100;
+                    const origH = Math.abs(y2 - y1) || 50;
+
+                    // ---------------------------------------------------------------------
+                    // 1. 外层 3D 舞台：锁死方框物理尺寸，双轴金刚居中（row 模式兼容性最好）
+                    // ---------------------------------------------------------------------
+                    const textDiv = document.createElement('div');
+                    textDiv.style.position = 'absolute';
+                    textDiv.style.left = '0px';
+                    textDiv.style.top = '0px';
+                    textDiv.style.width = `${origW}px`;
+                    textDiv.style.height = `${origH}px`;
+                    textDiv.style.transformOrigin = '0 0';
+                    textDiv.style.pointerEvents = 'none';
+
+                    // 强力激活标准双轴居中，不改变主轴方向，让内部纯内容盒子绝对居中
+                    textDiv.style.display = 'flex';
+                    textDiv.style.justifyContent = 'center'; 
+                    textDiv.style.alignItems = 'center';     
+
+                    // ---------------------------------------------------------------------
+                    // 2. 内层文本盒子：取消 100% 强撑，改用 max-限制，使其尺寸完全由文字内容决定
+                    // ---------------------------------------------------------------------
+                    const innerDiv = document.createElement('div');
+                    innerDiv.style.whiteSpace = 'pre-wrap';
+                    
+                    // 注入字体基础属性
+                    innerDiv.style.fontFamily = r.font_family || (typeof activeFontFamily !== 'undefined' ? activeFontFamily : 'sans-serif');
+                    innerDiv.style.fontSize = `${r.font_size || 20}px`;
+                    innerDiv.style.color = r.parsedColor || (typeof activeTextColor !== 'undefined' ? activeTextColor : '#ffffff');
+                    
+                    // 注入行距与字距
+                    const currentLineSpacing = (r.line_spacing !== undefined) ? r.line_spacing : (typeof activeLineSpacing !== 'undefined' ? activeLineSpacing : 1.2);
+                    innerDiv.style.lineHeight = currentLineSpacing;
+
+                    const currentLetterSpacing = (r.letter_spacing !== undefined) ? r.letter_spacing : (typeof activeLetterSpacing !== 'undefined' ? activeLetterSpacing : 0);
+                    innerDiv.style.letterSpacing = `${currentLetterSpacing}em`;
+
+                    const effectiveAlign = r.textAlign || (typeof activeTextAlign !== 'undefined' ? activeTextAlign : 'center');
+
+                    // 根据横竖排，弹性施加边界锁
+                    if (r.direction === 'v') {
+                        innerDiv.style.writingMode = 'vertical-rl';
+                        innerDiv.style.textOrientation = 'mixed';
+                        // 💥 【核心改动】：取消 height: 100%，改用 maxHeight 限制竖向换列。
+                        // 此时内层高度自适应内容，外层 Flex 的 alignItems: center 就能完美接管垂直居中！
+                        innerDiv.style.maxHeight = `${origH}px`; 
+                        innerDiv.style.textAlign = effectiveAlign; // 控制单列内部字符的垂直居中
+                    } else {
+                        innerDiv.style.writingMode = 'horizontal-tb';
+                        // 💥 【核心改动】：取消 width: 100%，改用 maxWidth 限制横向换行。
+                        // 内部盒子高度宽度全由内容决定，外层 Flex 会在 3D 扭曲前将其绝对焊死在正中心！
+                        innerDiv.style.maxWidth = `${origW}px`;
+                        innerDiv.style.textAlign = effectiveAlign; // 控制行内多行字的横向对齐
+                    }
+
+                    // 注入特效属性（描边与发光）
+                    if (r.strokeEnable) {
+                        innerDiv.style.webkitTextStroke = `${r.strokeWidthRatio * 10}px ${r.strokeColor || '#000'}`;
+                    }
+                    if (r.blurEnable) {
+                        innerDiv.style.textShadow = `0 0 ${r.blurSizeRatio * 20}px ${r.glowColor || '#ff0000'}`;
+                    }
+
+                    // 装载清洗后的文本
+                    innerDiv.innerText = (r.translation || "").replace(/【BR】/g, '\n');
+
+                    // 嵌套装配
+                    textDiv.appendChild(innerDiv);
+                    
+                    // 3. 激活 3D 显卡加速变形
+                    const matrix = getPerspectiveMatrix3D(origW, origH, r.points[0], r.points[1], r.points[2], r.points[3]);
+                    if (matrix) {
+                        textDiv.style.transform = `matrix3d(${matrix.join(',')})`;
+                    }
+
+                    container.appendChild(textDiv);
+                });
+            }
+            // 记得在每次 draw() 执行到末尾时，调用一下这个渲染器
+            renderDOMPerspectiveTexts();
         }
 
         function renderUI(e) {
@@ -4827,6 +5282,69 @@
             const isRegionOuterEnabled = (region.outerStrokeEnable !== undefined) ? region.outerStrokeEnable : activeOuterStrokeEnabled;
             if (isOuterStroke && !isRegionOuterEnabled && !hasLocalOuter) return; 
             // ----------------------------
+            // =========================================================================
+            // 【核心新增：3D 透视拦截器阻断点】
+            // =========================================================================
+            // =========================================================================
+            // 【完美修正版：3D 透视双模拦截烘焙器】
+            // =========================================================================
+            if (region.isPerspective && region.points) {
+                // 模式一：如果当前画笔指向的是【主屏幕画布】，走极速网页 DOM 预览流
+                if (targetCtx === mainCanvasCtx) {
+                    if (onlyPass === 'fill') {
+                        targetCtx.save();
+                        const isActive = (regions[activeRegionIndex] === region);
+                        targetCtx.strokeStyle = isActive ? '#a855f7' : '#6b21a8';
+                        targetCtx.lineWidth = 2 / viewState.scale;
+                        targetCtx.beginPath();
+                        region.points.forEach((p, pi) => pi === 0 ? targetCtx.moveTo(p.x, p.y) : targetCtx.lineTo(p.x, p.y));
+                        targetCtx.closePath();
+                        targetCtx.stroke();
+                        // 2. 如果是正在编辑的激活框，渲染高级控制手柄（4角方块 + 4边圆圈）
+                        if (isActive) {
+                            const handleSize = 8 / viewState.scale; // 顶点方块大小
+                            const radius = 4 / viewState.scale;     // 边的中心圆圈半径
+                            
+                            // A. 先画 4 个顶点的紫色方块
+                            targetCtx.fillStyle = '#a855f7';
+                            region.points.forEach(p => {
+                                targetCtx.fillRect(p.x - handleSize / 2, p.y - handleSize / 2, handleSize, handleSize);
+                            });
+
+                            // B. 【新增】计算并渲染 4 条边的中心控制圆点
+                            targetCtx.fillStyle = '#c084fc'; // 浅紫色，用于区分边和角
+                            targetCtx.strokeStyle = '#ffffff';
+                            targetCtx.lineWidth = 1 / viewState.scale;
+
+                            for (let i = 0; i < 4; i++) {
+                                const next = (i + 1) % 4;
+                                // 计算两条边之间的中点绝对像素坐标
+                                const midX = (region.points[i].x + region.points[next].x) / 2;
+                                const midY = (region.points[i].y + region.points[next].y) / 2;
+
+                                targetCtx.beginPath();
+                                targetCtx.arc(midX, midY, radius, 0, Math.PI * 2);
+                                targetCtx.fill();
+                                targetCtx.stroke();
+                            }
+                        }
+                        targetCtx.restore();
+                    }
+                    return; // 💥 阻断主屏幕 Canvas 绘字
+                } 
+                
+                // 模式二：如果当前画笔指向的是【后台离屏/导出画布】，全自动执行 3D 高清像素烘焙
+                else {
+                    // 【核心修正点】：兼容单图导出的 onlyPass 为 undefined 或 批量导出的 null 情况
+                    // 只有当有明确的局部 pass 且不是 'fill' 时才拦截；如果 total 渲染（onlyPass 为空）或者是 'fill' 阶段，则放行烘焙
+                    if (onlyPass && onlyPass !== 'fill') return;
+                    
+                    // 🚀 召唤后台烘焙引擎，把透视字烙印进导出的 PNG 图片中
+                    bakePerspectiveTextToOfflineCanvas(region, targetCtx);
+                    return; 
+                }
+            }
+            // =========================================================================
 
             // [新增] 获取当前框的字重
             const effectiveWeight = region.fontWeight || activeFontWeight;
@@ -7954,6 +8472,11 @@ ctx.translate(0, Math.round(charY));
             // --- 新增：还原对齐方式和字重的 UI 显示 ---
             textAlignSelect.value = activeTextAlign;   // 还原为全局对齐方式
             fontWeightSelect.value = activeFontWeight; // 还原为全局默认字重
+
+            // [新增] 归位清除 3D 透视开关勾选
+            const pEnableCb = document.getElementById('perspectiveEnableCb');
+            if (pEnableCb) pEnableCb.checked = false;
+
             // 调用你刚才改好的那个函数
             disableControls(); 
             updateColorSwatches();
