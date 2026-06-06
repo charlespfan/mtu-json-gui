@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v19.4.14)</title>
+    <title>MTU 嵌字编辑器 (v20.0.15)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -474,8 +474,8 @@
                     </div>
                 </div>
                 <div class="w-px h-6 bg-gray-600 mx-1"></div>
-                <label class="flex items-center gap-1 text-xs text-gray-400 cursor-pointer"  title="空间 3D 透视 (选中单框时点击该项，会出现可自由拖拽的紫框，通过拖拽可让文字形状自由透视变化 )">
-                    <input type="checkbox" id="perspectiveEnableCb" class="accent-purple-600" title="空间 3D 透视 (选中单框时点击该项，会出现可自由拖拽的紫框，通过拖拽可让文字形状自由透视变化 )">
+                <label class="flex items-center gap-1 text-xs text-gray-400 cursor-pointer">
+                    <input type="checkbox" id="perspectiveEnableCb" class="accent-purple-600">
                     空间 3D 透视
                 </label>
             </div>
@@ -733,6 +733,8 @@
                     <input type="color" id="paintColorPicker" value="#ffffff" class="hidden">
                     <button id="paintEraserBtn" class="rt-btn" title="涂鸦橡皮 (右键擦，中键画，快捷键: < 和 > 调节笔触大小)">🧹</button>
                     <button id="comboModeBtn" class="rt-btn text-purple-400 border-purple-500/30" title="混合模式：右键自由涂鸦，中键蒙版橡皮，快捷键: < 和 > 调节笔触大小">混</button>
+                    <button id="cloneStampBtn" class="rt-btn text-emerald-400 border-emerald-500/30" title="仿制图章：右键选择采样源(模仿圈)，左键拖拽涂抹开始复制(绘制圈)">章</button>
+                    <button id="stampEraserBtn" class="rt-btn text-rose-400 border-rose-500/30" title="图章橡皮：使用绝对像素硬边缘与锯齿圆指针，精准擦除涂鸦层内容">橡</button>
                 </div>
                 <div class="flex flex-col gap-0">
                     <button id="autoFillBtnRight" class="rt-btn text-green-400 border-green-500/30" title="自动背景填充：检测行框边缘并填充纯黑/纯白">填</button>
@@ -916,8 +918,12 @@
 
         let draggingPointIdx = -1; // 【新增】用于记录当前鼠标正在拖拽 3D 框的哪一个顶点（0:左上, 1:右上, 2:右下, 3:左下）
 
-
-
+        // --- 仿制图章模式独立状态锁 ---
+        let stampMode = 'none';       // 'active' 或 'none'
+        let stampSource = null;       // 模仿圈采样点图片绝对坐标 {x, y}
+        let stampOffset = null;       // 两个圆圈锁定后的图片绝对位移矢量 {x, y}
+        let isStampDrawing = false;   // 左键连续涂抹仿制状态
+        let isStampErasing = false;   // [新增] 图章橡皮连续擦除状态锁
 
         // --- 在脚本顶部的变量定义区 ---
         const mainCanvas = document.getElementById('mainCanvas');
@@ -1067,7 +1073,17 @@
         const paintOpacityRange = document.getElementById('paintOpacityRange');
         const paintOpacityValue = document.getElementById('paintOpacityValue');
 
-
+        // [新增] 绑定图章按钮点击事件
+        // [新增] 绑定图章按钮点击事件
+        document.getElementById('cloneStampBtn').onclick = function() {
+            const isActive = (stampMode === 'active');
+            clearAllTools(); // 一键清除全部状态互斥
+            if (!isActive) {
+                stampMode = 'active';
+                this.classList.add('mask-active');
+            }
+            updateToolStatus();
+        };
         document.getElementById('perspectiveEnableCb').addEventListener('change', (e) => {
             if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
                 const r = regions[activeRegionIndex];
@@ -1087,6 +1103,173 @@
             }
         });
 
+
+        // --- [新增] 图章硬核绝对像素橡皮引擎 ---
+        function handleStampErase(pos) {
+            if (!currentImage) return;
+            isCanvasDirty = true;
+
+            // 物理半径：直径为 maskBrushSize
+            const r = maskBrushSize * 0.5; 
+
+            // 计算当前释放位置在底图上影响的绝对像素包围框
+            const targetLeft = Math.floor(pos.x - r);
+            const targetTop = Math.floor(pos.y - r);
+            const targetRight = Math.ceil(pos.x + r);
+            const targetBottom = Math.ceil(pos.y + r);
+
+            const width = targetRight - targetLeft;
+            const height = targetBottom - targetTop;
+            if (width <= 0 || height <= 0) return;
+
+            // 创建轻量级内存离屏画布
+            const maskCanvas = document.createElement('canvas');
+            maskCanvas.width = width;
+            maskCanvas.height = height;
+            const maskCtx = maskCanvas.getContext('2d');
+
+            const maskImgData = maskCtx.createImageData(width, height);
+            const data = maskImgData.data;
+
+            // 遍历物理像素格点中心，严格按圆方程计算出 100% 硬度的擦除饼图
+            for (let y = targetTop; y < targetBottom; y++) {
+                for (let x = targetLeft; x < targetRight; x++) {
+                    const dist_sq = Math.pow((x + 0.5) - pos.x, 2) + Math.pow((y + 0.5) - pos.y, 2);
+                    if (dist_sq <= r * r) {
+                        const localX = x - targetLeft;
+                        const localY = y - targetTop;
+                        const idx = (localY * width + localX) * 4;
+                        // 写入 100% 不透明的色块，用于作为裁切区域
+                        data[idx+3] = 255; 
+                    }
+                }
+            }
+            
+            // 1像素单点容错保底逻辑
+            let hasPixel = false;
+            for (let i = 3; i < data.length; i += 4) {
+                if (data[i] === 255) { hasPixel = true; break; }
+            }
+            if (!hasPixel) {
+                const localX = Math.floor(pos.x) - targetLeft;
+                const localY = Math.floor(pos.y) - targetTop;
+                if (localX >= 0 && localX < width && localY >= 0 && localY < height) {
+                    const idx = (localY * width + localX) * 4;
+                    data[idx+3] = 255;
+                }
+            }
+            maskCtx.putImageData(maskImgData, 0, 0);
+
+            // 核心操作：利用 destination-out 擦除主涂鸦层
+            paintCtx.save();
+            paintCtx.imageSmoothingEnabled = false;
+            paintCtx.globalCompositeOperation = 'destination-out'; // 在相交区域扣除透明度
+            paintCtx.drawImage(maskCanvas, targetLeft, targetTop);
+            paintCtx.restore();
+
+            draw(); 
+        }
+
+        // --- [新增] 仿制图章绝对像素克隆引擎 ---
+        // --- [升级版] 支持“传递仿制”与“自采样”的绝对像素克隆引擎 ---
+        // --- [硬核像素对齐版] 支持传递的方形像素图章引擎 ---
+        // --- [终极像素圆版] 支持传递的硬边缘像素锯齿圆图章引擎 ---
+        // --- [完美修复版] 支持传递的硬边缘像素锯齿圆图章引擎 ---
+        // --- [矢量圆联动版] 支持传递、完美释放1像素单点的硬边缘图章引擎 ---
+        // --- [完美融合版] 彻底解决涂鸦层方形溢出、支持传递与1像素单点的图章引擎 ---
+        function handleStampDraw(pos) {
+            if (!stampSource || !stampOffset || !currentImage) return;
+            isCanvasDirty = true;
+
+            // 1. 半径允许为 0.5 (对应 1 像素直径单点)
+            const r = maskBrushSize * 0.5; // 让 maskBrushSize 直接代表绝对像素直径 
+
+            // 计算当前释放位置在底图上影响的绝对像素包围框
+            const targetLeft = Math.floor(pos.x - r);
+            const targetTop = Math.floor(pos.y - r);
+            const targetRight = Math.ceil(pos.x + r);
+            const targetBottom = Math.ceil(pos.y + r);
+
+            const width = targetRight - targetLeft;
+            const height = targetBottom - targetTop;
+            if (width <= 0 || height <= 0) return;
+
+            const rDx = Math.round(stampOffset.x);
+            const rDy = Math.round(stampOffset.y);
+            
+            // 计算对应的绝对采样源整数起点坐标
+            const srcLeft = targetLeft - rDx;
+            const srcTop = targetTop - rDy;
+
+            // =========================================================================
+            // 画布①：临时组合画布 —— 用来将原图和涂鸦层拼成一个完整的“方形内容块”
+            // =========================================================================
+            const combinedCanvas = document.createElement('canvas');
+            combinedCanvas.width = width;
+            combinedCanvas.height = height;
+            const combinedCtx = combinedCanvas.getContext('2d');
+            combinedCtx.imageSmoothingEnabled = false;
+
+            // 在常规混合模式下，把原图和涂鸦层严丝合缝地叠在一起
+            combinedCtx.globalCompositeOperation = 'source-over';
+            combinedCtx.drawImage(currentImage, srcLeft, srcTop, width, height, 0, 0, width, height);
+            combinedCtx.drawImage(paintCanvas, srcLeft, srcTop, width, height, 0, 0, width, height);
+
+            // =========================================================================
+            // 画布②：纯净遮罩画布 —— 用 ImageData 动态计算出 100% 纯硬度的绝对像素圆
+            // =========================================================================
+            const maskCanvas = document.createElement('canvas');
+            maskCanvas.width = width;
+            maskCanvas.height = height;
+            const maskCtx = maskCanvas.getContext('2d');
+
+            const maskImgData = maskCtx.createImageData(width, height);
+            const data = maskImgData.data;
+
+            // 遍历物理像素格点中心，严格按圆方程过滤，100% 消灭边缘抗锯齿
+            for (let y = targetTop; y < targetBottom; y++) {
+                for (let x = targetLeft; x < targetRight; x++) {
+                    const dist_sq = Math.pow((x + 0.5) - pos.x, 2) + Math.pow((y + 0.5) - pos.y, 2);
+                    if (dist_sq <= r * r) {
+                        const localX = x - targetLeft;
+                        const localY = y - targetTop;
+                        const idx = (localY * width + localX) * 4;
+                        data[idx+3] = 255; // 圆内像素设为 100% 完全不透明
+                    }
+                }
+            }
+            
+            // 1像素级单点容错保底逻辑
+            let hasPixel = false;
+            for (let i = 3; i < data.length; i += 4) {
+                if (data[i] === 255) { hasPixel = true; break; }
+            }
+            if (!hasPixel) {
+                const localX = Math.floor(pos.x) - targetLeft;
+                const localY = Math.floor(pos.y) - targetTop;
+                if (localX >= 0 && localX < width && localY >= 0 && localY < height) {
+                    const idx = (localY * width + localX) * 4;
+                    data[idx+3] = 255;
+                }
+            }
+            maskCtx.putImageData(maskImgData, 0, 0);
+
+            // =========================================================================
+            // 🌟 核心修正操作：用 destination-in 让组合好的方形内容整体裁切成圆形
+            // =========================================================================
+            // destination-in 的意思是：只保留 combinedCanvas 自身与新画上来的 maskCanvas 相交的部分
+            combinedCtx.globalCompositeOperation = 'destination-in';
+            combinedCtx.drawImage(maskCanvas, 0, 0);
+
+            // 5. 最后把这张裁剪得无可挑剔的圆形内容印回主涂鸦层
+            paintCtx.save();
+            paintCtx.imageSmoothingEnabled = false;
+            paintCtx.globalCompositeOperation = 'source-over';
+            paintCtx.drawImage(combinedCanvas, targetLeft, targetTop);
+            paintCtx.restore();
+
+            draw(); 
+        }
         // 【核心数学引擎】通过 4 个不规则顶点坐标，反推解出 CSS3 所需的 matrix3d 16位矩阵
         function getPerspectiveMatrix3D(w, h, p0, p1, p2, p3) {
             const x0 = p0.x, y0 = p0.y;
@@ -2459,6 +2642,9 @@
         /**
         * 执行全局查找并生成索引
         */
+/**
+        * 执行全局查找并生成索引（智能当前位置优先版）
+        */
         async function executeFind() {
             const findStr = document.getElementById('findInput').value;
             const matchCase = document.getElementById('matchCase').checked;
@@ -2486,10 +2672,33 @@
 
             // 2. 显示导航 UI
             document.getElementById('searchNavUI').classList.remove('hidden');
-            currentSearchIndex = 0;
+
+            // =========================================================================
+            // 🌟【核心升级】：智能锚定到当前查看或编辑的实际位置
+            // =========================================================================
+            let targetSearchIdx = searchResults.findIndex(match => {
+                // 情况 A：匹配项在后续页面，直接通过
+                if (match.fileIndex > currentFileIndex) return true;
+                
+                // 情况 B：匹配项正好在当前页
+                if (match.fileIndex === currentFileIndex) {
+                    // 如果当前有选中具体的红框，就从这个红框或它后面的框开始聚焦；否则从当前页第 1 个框算起
+                    const baseRegionIdx = (activeRegionIndex !== -1) ? activeRegionIndex : 0;
+                    return match.regionIndex >= baseRegionIdx;
+                }
+                
+                return false;
+            });
+
+            // ⚡【安全回滚】：如果当前页之后（含当前页）没有任何匹配项了，说明到尽头了，自动循环回全书第 1 处匹配
+            if (targetSearchIdx === -1) {
+                targetSearchIdx = 0;
+            }
+
+            currentSearchIndex = targetSearchIdx;
             updateSearchStatus();
             
-            // 3. 立即跳转到第一个匹配项
+            // 3. 立即顺畅跳转到该匹配项（原有跳转引擎会自动处理跨页逻辑和涂鸦暂存）
             goToSearchResult(currentSearchIndex);
         }
 
@@ -3315,18 +3524,68 @@
         mainCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
         // 改为监听父容器
+        // 改为监听父容器
         container.addEventListener('mousedown', (e) => {
-            // 使用你代码中原有的坐标转换函数
-            const pos = getMousePos(e); //
+            const pos = getMousePos(e); 
 
-            // --- 新增：右键多选总框逻辑 ---
-            // 只有在非涂鸦、非蒙版模式下，右键才用于选择
-            if (e.button === 2 && maskEditMode === 'none' && paintMode === 'none' && !comboMode) {
+            // =========================================================================
+            // 🌟 [核心修复 1] 仿制图章绝对高优先级拦截门（必须放在最顶端，防止右键被吞）
+            // =========================================================================
+            if (typeof stampMode !== 'undefined' && stampMode === 'active') {
+                if (e.button === 2) { 
+                    // 右键单击：留下或重置模仿圈绝对物理坐标
+                    e.preventDefault();
+                    stampSource = pos;
+                    stampOffset = null; // 💥 关键：每次重选右键，都清空位移锁，模仿圆重新进入静止定格状态
+                    console.log("图章模仿点设定/重置成功:", stampSource);
+                    draw();
+                    renderUI(e);
+                    return;
+                }
+                if (e.button === 0) { 
+                    // 左键落下：启动涂抹
+                    if (isSpacePressed) return; 
+                    if (!stampSource) {
+                        alert("请先在画面上【单击右键】以确定仿制采样点(模仿圈)！");
+                        return;
+                    }
+                    isStampDrawing = true;
+                    isCanvasDirty = true;
+                    
+                    // 🌟【关键修正】：只有在 stampOffset 为空（即右键后第一次落下左键）时，才去锁定相对位移。
+                    // 之后即使你松开左键换个地方再画第二笔，只要不点右键重置，两圆的相对距离就死死锁住不变！
+                    if (!stampOffset) {
+                        stampOffset = {
+                            x: pos.x - stampSource.x,
+                            y: pos.y - stampSource.y
+                        };
+                    }
+                    
+                    handleStampDraw(pos);
+                    return; 
+                }
+            }
+            // --- [新增] 图章橡皮核心按下控制链 ---
+            if (typeof stampMode !== 'undefined' && stampMode === 'eraser') {
+                if (e.button === 0) { 
+                    // 左键落下：启动绝对像素物理擦除
+                    if (isSpacePressed) return; // 空格抓手平移让位
+                    isStampErasing = true;
+                    isCanvasDirty = true;
+                    handleStampErase(pos);
+                    return;
+                }
+                if (e.button === 2) {
+                    e.preventDefault(); // 橡皮模式下右键不具备采样功能，直接拦截防止弹菜单
+                    return;
+                }
+            }
+            // --- 原有的：右键多选总框逻辑（新增 stampMode !== 'active' 安全锁） ---
+            if (e.button === 2 && maskEditMode === 'none' && paintMode === 'none' && !comboMode && stampMode !== 'active') {
                 e.preventDefault(); // 禁止默认菜单
                 const hit = findRegionAt(pos);
                 
                 if (hit) {
-                    // 原有的：右键点中框，切换选中状态
                     const idx = hit.regionIdx;
                     const sIdx = selectedRegions.indexOf(idx);
                     if (sIdx > -1) {
@@ -3337,25 +3596,23 @@
                         setActiveRegion(idx);
                     }
                 } else {
-                    // 【新增】：右键点击空白处，清空右键多选列表
                     selectedRegions = [];
                     console.log("右键多选已清空");
                 }
                 
                 draw();
-                return; // 右键逻辑处理完毕，直接返回，不触发后续的 onMouseDown
+                return; 
             }
             
+            // --- 以下保持你原有的其他 mousedown 逻辑不变 ---
             if (e.altKey && e.button === 0) {
-                e.preventDefault(); // [新增] 防止Alt划线时触发突发粘手
+                e.preventDefault(); 
                 isAltSelecting = true;
                 altSelectionPath = [pos];
                 selectedItems = []; 
                 viewState.isPanning = false; 
                 draw();
             } else {
-                // [核心新增]：如果是左键点击画布容器，强制阻止浏览器默认的“网页文本选择”行为
-                // 这能确保长按时绝对不会变成文字选择状态
                 if (e.button === 0) {
                     e.preventDefault();
                 }
@@ -3364,11 +3621,34 @@
         });
 
         // 修改后的 mainCanvas 鼠标移动监听
+        // 修改后的 mainCanvas 鼠标移动监听
         container.addEventListener('mousemove', (e) => {
-            // 这里的 renderUI 会让笔刷圆圈跟随鼠标到右侧区域
-            // 1. 始终渲染 UI 圆圈（笔刷预览）
-            renderUI(e);
+            const pos = getMousePos(e);
+            currentMousePos = pos;
+            renderUI(e); // 始终保证 UI 层刷新
 
+            // =========================================================================
+            // 🌟 [核心修复 2] 仿制图章持续移动克隆拦截
+            // =========================================================================
+            if (typeof stampMode !== 'undefined' && stampMode === 'active') {
+                mainCanvas.style.cursor = 'crosshair';
+                if (isStampDrawing && stampSource && stampOffset) {
+                    handleStampDraw(pos);
+                }
+                return; // 强行阻断，防止滑入常规选框拖拽平移逻辑
+            }
+            // --- [新增] 图章橡皮持续移动擦除拦截 ---
+            if (typeof stampMode !== 'undefined' && stampMode === 'eraser') {
+                mainCanvas.style.cursor = 'crosshair';
+                const pos = getMousePos(e);
+                currentMousePos = pos;
+                renderUI(e);
+                
+                if (isStampErasing) {
+                    handleStampErase(pos);
+                }
+                return; // 成功拦截
+            }
             // 2. 如果正在进行涂鸦或蒙版操作，直接交给 onMouseMove 处理并拦截
             if (isMaskDragging) {
                 onMouseMove(e);
@@ -3437,7 +3717,19 @@
                 draw();
                 // 去掉这里的 return
             }
-            
+
+            if (isStampDrawing) {
+                isStampDrawing = false;
+                persistCanvasData();
+                draw();
+            }
+
+            // --- [新增] 图章橡皮左键松开落盘快照 ---
+            if (isStampErasing) {
+                isStampErasing = false;
+                persistCanvasData(); // 写入历史记录，支持 Ctrl+Z 撤销
+                draw();
+            }
             // 4. 更新光标样式
             if (wasPanning) {
                 document.getElementById('canvasContainer').style.cursor = (maskEditMode !== 'none') ? 'crosshair' : 'grab';
@@ -3956,6 +4248,36 @@
                 return; // 只要按了空格，不执行选框或涂抹
             }
 
+            // --- [新增] 仿制图章核心按键控制链 ---
+            if (stampMode === 'active') {
+                if (e.button === 2) { 
+                    // 右键单击：留下或重置模仿圈绝对物理坐标
+                    e.preventDefault();
+                    stampSource = pos;
+                    stampOffset = null; // 每次重选右键，都清空原有的位移，等待左键重新锚定
+                    console.log("图章模仿点设定/重置成功:", stampSource);
+                    draw();
+                    renderUI(e);
+                    return;
+                }
+                if (e.button === 0) { 
+                    // 左键落下：触发绘制圈，锁定相对位移，启动涂抹
+                    if (!stampSource) {
+                        alert("请先在画面上【单击右键】以确定仿制采样点(模仿圈)！");
+                        return;
+                    }
+                    isStampDrawing = true;
+                    isCanvasDirty = true;
+                    // 💥 【核心公式】：在左键按下的瞬间，精确锁定两圈之间基于图片绝对像素的相对矢量位移
+                    stampOffset = {
+                        x: pos.x - stampSource.x,
+                        y: pos.y - stampSource.y
+                    };
+                    handleStampDraw(pos);
+                    return;
+                }
+            }
+
             // --- [新增] 混合模式按下逻辑 ---
             if (comboMode && (e.button === 2 || e.button === 1)) {
                 isMaskDragging = true;
@@ -4055,6 +4377,35 @@
                             return;
                         }
                     }
+                    // =============================================================
+                    // 【核心升级：3D 专属多边形内域判定器】
+                    // 算法：经典图形学射线法 (Ray-Casting)，精准判定鼠标是否落在任意变形的四边形内部
+                    // =============================================================
+                    const isPointIn3DPolygon = (px, py, pts) => {
+                        let inside = false;
+                        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+                            const xi = pts[i].x, yi = pts[i].y;
+                            const xj = pts[j].x, yj = pts[j].y;
+                            const intersect = ((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi);
+                            if (intersect) inside = !inside;
+                        }
+                        return inside;
+                    };
+
+                    // 如果点击命中了紫框的多边形实体内部
+                    if (isPointIn3DPolygon(pos.x, pos.y, region.points)) {
+                        transformState.dragging = true;
+                        transformState.action = 'move-line'; // 强行激活原本系统的全框平移链条
+                        
+                        // 封印初始位移快照
+                        transformState.startMouse = { x: pos.x, y: pos.y };
+                        transformState.startPoints = JSON.parse(JSON.stringify(region.points));
+                        transformState.startPointsRegionIndex = activeRegionIndex;
+                        
+                        return; // 💥 【核心熔断】：这里必须写 return！
+                        // 直接强行中止函数，彻底断开与后面橙色矩形碰撞逻辑的联系，绝对不给它滑向“画布平移”的机会！
+                    }
+                    // =============================================================
                 }
                 // =============================================================
                 // =============================================================
@@ -4293,6 +4644,23 @@
                     return;   // 拦截
                 }
                 // =============================================================
+                // 【核心新增】：3D 透视框的【全框整体平移】双轨联动同步器
+                // =============================================================
+                if (region.isPerspective && transformState.startPoints && transformState.dragging && transformState.startPointsRegionIndex === activeRegionIndex) {
+                    // 实时计算鼠标相较于刚按下时的总位移跨度
+                    const dx = pos.x - transformState.startMouse.x;
+                    const dy = pos.y - transformState.startMouse.y;
+                    
+                    // 让 4 个空间顶点同时吃上相同的位移量，实现完美平行移动
+                    region.points.forEach((p, i) => {
+                        p.x = transformState.startPoints[i].x + dx;
+                        p.y = transformState.startPoints[i].y + dy;
+                    });
+
+                    // ⚠️ 警告：这里绝对【不要】写 return！
+                    // 必须放行！让原本系统的代码继续往下跑，去位移它的常规 region.box。
+                    // 这样常规框和 3D 点就能并肩前行，几何重心永远不会分裂错位！
+                }
                 // =============================================================
 
                 // 1. 移动小框
@@ -5115,8 +5483,8 @@
             // 1. 清空 UI 层
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
 
-            // [修改] 增加 comboMode 的判定，确保混合模式下也显示圆圈
-            if (maskEditMode === 'none' && paintMode === 'none' && !comboMode) return;
+            // [修改] 增加 'eraser' 条件放行
+            if (maskEditMode === 'none' && paintMode === 'none' && !comboMode && (typeof stampMode === 'undefined' || (stampMode !== 'active' && stampMode !== 'eraser'))) return;
 
             if (e) {
                 const rect = uiCanvas.getBoundingClientRect();
@@ -5125,24 +5493,133 @@
             }
 
             uiCtx.save();
+
+            // =========================================================================
+            // 🌟 核心分支 A：仿制图章/图章橡皮模式 —— 始终保持纤细精致的【贴身像素锯齿矢量圈】
+            // =========================================================================
+            if (typeof stampMode !== 'undefined' && (stampMode === 'active' || stampMode === 'eraser')) {
+                const r = maskBrushSize * 0.5; // 保持统一的物理半径（直径为 maskBrushSize）
+                const mPos = currentMousePos || { x: 0, y: 0 };
+
+                // 内部闭包：顺着物理像素格子边缘精准勾勒 1px 线条的阶梯轮廓
+                function drawSteppedCirclePath(ox, oy, isSourceMode) {
+                    const tLeft = Math.floor(ox - r);
+                    const tTop = Math.floor(oy - r);
+                    const tRight = Math.ceil(ox + r);
+                    const tBottom = Math.ceil(oy + r);
+
+                    function inCircle(px, py) {
+                        return (Math.pow((px + 0.5) - ox, 2) + Math.pow((py + 0.5) - oy, 2)) <= r * r;
+                    }
+
+                    uiCtx.beginPath();
+                    let hasAnyPixel = false;
+
+                    for (let y = tTop; y < tBottom; y++) {
+                        for (let x = tLeft; x < tRight; x++) {
+                            if (inCircle(x, y)) {
+                                hasAnyPixel = true;
+                                const sX = x * viewState.scale + viewState.x;
+                                const sY = y * viewState.scale + viewState.y;
+                                const sW = viewState.scale;
+                                const sH = viewState.scale;
+
+                                if (!inCircle(x, y - 1)) { uiCtx.moveTo(sX, sY); uiCtx.lineTo(sX + sW, sY); }
+                                if (!inCircle(x, y + 1)) { uiCtx.moveTo(sX, sY + sH); uiCtx.lineTo(sX + sW, sY + sH); }
+                                if (!inCircle(x - 1, y)) { uiCtx.moveTo(sX, sY); uiCtx.lineTo(sX, sY + sH); }
+                                if (!inCircle(x + 1, y)) { uiCtx.moveTo(sX + sW, sY); uiCtx.lineTo(sX + sW, sY + sH); }
+                            }
+                        }
+                    }
+
+                    if (!hasAnyPixel) {
+                        const fx = Math.floor(ox);
+                        const fy = Math.floor(oy);
+                        const sX = fx * viewState.scale + viewState.x;
+                        const sY = fy * viewState.scale + viewState.y;
+                        const sW = viewState.scale;
+                        const sH = viewState.scale;
+                        uiCtx.moveTo(sX, sY); uiCtx.lineTo(sX + sW, sY);
+                        uiCtx.lineTo(sX + sW, sY + sH); uiCtx.lineTo(sX, sY + sH);
+                        uiCtx.closePath();
+                    }
+
+                    uiCtx.save();
+                    if (isSourceMode) {
+                        // 【模仿圈视效】
+                        uiCtx.lineWidth = 2.4;
+                        uiCtx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                        uiCtx.stroke();
+                        uiCtx.setLineDash([4, 4]);
+                        uiCtx.lineWidth = 1.2;
+                        uiCtx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
+                        uiCtx.stroke();
+                    } else {
+                        // 【绘制圈/橡皮圈视效】
+                        uiCtx.lineWidth = 2.4;
+                        uiCtx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+                        uiCtx.stroke();
+                        uiCtx.lineWidth = 1.0;
+                        // 如果是橡皮模式，内部实线条可以用带有警示感的玫瑰红(rose)或者纯黑，这里用深色保持高对比
+                        uiCtx.strokeStyle = stampMode === 'eraser' ? 'rgba(225, 29, 72, 0.9)' : 'rgba(0, 0, 0, 0.85)';
+                        uiCtx.stroke();
+                    }
+                    uiCtx.restore();
+                }
+
+                // -------------------------------------------------------------
+                // A1. 实时渲染：【绘制/橡皮圈】（紧随指针移动，边缘磁吸网格阶梯）
+                // -------------------------------------------------------------
+                drawSteppedCirclePath(mPos.x, mPos.y, false);
+
+                // -------------------------------------------------------------
+                // A2. 实时渲染：【模仿采样圈】（仅在图章active模式下工作，橡皮模式无采样圈）
+                // -------------------------------------------------------------
+                if (stampMode === 'active') {
+                    let srcX = null;
+                    let srcY = null;
+                    if (stampOffset) {
+                        srcX = mPos.x - Math.round(stampOffset.x);
+                        srcY = mPos.y - Math.round(stampOffset.y);
+                    } else if (stampSource) {
+                        srcX = stampSource.x;
+                        srcY = stampSource.y;
+                    }
+                    if (srcX !== null) {
+                        drawSteppedCirclePath(srcX, srcY, true);
+                        const screenSrcX = srcX * viewState.scale + viewState.x;
+                        const screenSrcY = srcY * viewState.scale + viewState.y;
+                        uiCtx.save();
+                        uiCtx.beginPath();
+                        uiCtx.moveTo(screenSrcX - 6, screenSrcY); uiCtx.lineTo(screenSrcX + 6, screenSrcY);
+                        uiCtx.moveTo(screenSrcX, screenSrcY - 6); uiCtx.lineTo(screenSrcX, screenSrcY + 6);
+                        uiCtx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                        uiCtx.lineWidth = 2.0;
+                        uiCtx.stroke();
+                        uiCtx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
+                        uiCtx.lineWidth = 1.0;
+                        uiCtx.stroke();
+                        uiCtx.restore();
+                    }
+                }
+
+                uiCtx.restore();
+                return; // 强行拦截常规逻辑
+            }
+
+            // =========================================================================
+            // 原有分支 B：常规修图模式（保持原有常规粗圆形圈）
+            // =========================================================================
+            let radius = maskBrushSize; 
             uiCtx.beginPath();
-            
-            // 使用当前的笔触大小
-            const radius = maskBrushSize; 
-            
             uiCtx.arc(lastUIX, lastUIY, radius, 0, Math.PI * 2);
-            
-            // 绘制样式
-            // --- 修改这里：加粗外层白边 ---
             uiCtx.strokeStyle = 'rgba(255, 255, 255, 0.9)'; 
-            uiCtx.lineWidth = 3.5; // 从 2 改为 3.5，甚至可以到 4
+            uiCtx.lineWidth = 3.5; 
             uiCtx.stroke();
-            
-            // --- 修改这里：加粗内层/底层黑边 (阴影) ---
             uiCtx.strokeStyle = 'rgba(0, 0, 0, 0.7)'; 
-            uiCtx.lineWidth = 1.5; // 从 1 改为 1.5
+            uiCtx.lineWidth = 1.5; 
             uiCtx.stroke();
-            
+
             uiCtx.restore();
         }
         
@@ -7713,9 +8190,36 @@ ctx.translate(0, Math.round(charY));
         }
         // 修改 MTU 中的 findRegionAt 函数
         function findRegionAt(pos) {
+            // 【内置高精射线判定工具】：精准判定鼠标当前坐标是否落在任意扭曲的多边形纯内部
+            const isPointIn3DPolygon = (px, py, pts) => {
+                let inside = false;
+                for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+                    const xi = pts[i].x, yi = pts[i].y;
+                    const xj = pts[j].x, yj = pts[j].y;
+                    const intersect = ((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi);
+                    if (intersect) inside = !inside;
+                }
+                return inside;
+            };
+
             // 逆序遍历区域，确保选中最上层的元素
             for (let i = regions.length - 1; i >= 0; i--) {
                 const r = regions[i];
+                
+                // =====================================================================
+                // 【核心新增】：3D 透视框未激活状态下的【高精盲点捕获器】
+                // 如果这个框开启了 3D 空间透视，直接退役死板的矩形框判定，改由空间 4 顶点多边形接管
+                // =====================================================================
+                if (r.isPerspective && r.points) {
+                    if (isPointIn3DPolygon(pos.x, pos.y, r.points)) {
+                        return { regionIdx: i, lineIdx: -1 }; // 🎯 成功盲点命中，直接返回该 3D 框的索引
+                    }
+                    // 💥 【关键熔断阻断点】：
+                    // 如果是 3D 框但本次鼠标没点中它，直接 continue 跳过当前框。
+                    // 严防死守，绝对不给它往下继续滑向老旧 r.box 矩形判定的机会，从根本上斩断与橙框的脐带！
+                    continue; 
+                }
+                // =====================================================================
                 
                 if (r.lines) {
                     // 深入遍历区域内的每一个小框（行）
@@ -7727,7 +8231,7 @@ ctx.translate(0, Math.round(charY));
                     }
                 }
 
-                // 备选方案：如果没点中小框，检查是否点中了大框范围
+                // 备选方案：如果没点中小框，检查是否点中了大框范围（常规 2D 矩形框继续走这里）
                 if (r.box) {
                     const [x1, y1, x2, y2] = r.box;
                     if (pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2) {
@@ -8165,7 +8669,9 @@ ctx.translate(0, Math.round(charY));
         // --- 全局快捷键：日漫模式翻页与字号调节 ---
         window.addEventListener('keydown', (e) => {
         // --- 核心修复：把蒙版缩放逻辑提到 isEditing 判断之前 ---
-            if (maskEditMode !== 'none' || paintMode !== 'none' || comboMode) {
+        // 补充 stampMode === 'active' 判定条件
+            // 允许图章橡皮在按下 < 和 > 时无缝调整绝对像素直径
+            if (maskEditMode !== 'none' || paintMode !== 'none' || comboMode || stampMode === 'active' || stampMode === 'eraser') {
                 if (e.key === '<' || e.key === ',') { 
                     maskBrushSize = Math.max(1, maskBrushSize - 1);
                     // 如果你有笔触大小的显示框，同步更新它
@@ -8610,12 +9116,18 @@ ctx.translate(0, Math.round(charY));
             maskEditMode = 'none';
             paintMode = 'none';
             comboMode = false;
+            stampMode = 'none';       
+            stampSource = null;       
+            stampOffset = null;       
+            isStampDrawing = false;   
+            isStampErasing = false;   // [新增]
             
-            // 2. 移除所有 5 个按钮的高亮样式 (mask-active)
+            // 2. 移除所有相关按钮的高亮样式 (mask-active)
             const toolBtns = [
                 'maskBrushBtn', 'maskEraserBtn', 
                 'paintBrushBtn', 'paintEraserBtn', 
-                'comboModeBtn'
+                'comboModeBtn', 'cloneStampBtn',
+                'stampEraserBtn' // [新增]
             ];
             toolBtns.forEach(id => {
                 const btn = document.getElementById(id);
@@ -8625,6 +9137,33 @@ ctx.translate(0, Math.round(charY));
             // 3. 恢复默认光标
             document.getElementById('canvasContainer').style.cursor = 'grab';
         }
+
+        // [新增] 绑定图章橡皮按钮点击事件
+        document.getElementById('stampEraserBtn').onclick = function() {
+            const isActive = (stampMode === 'eraser');
+            clearAllTools(); 
+            if (!isActive) {
+                stampMode = 'eraser';
+                this.classList.add('mask-active');
+            }
+            updateToolStatus();
+        };
+        // 切换涂鸦工具的 UI 激活状态
+        // 修改 updateToolStatus
+        // 同时修改 updateToolStatus 让图章模式下鼠标显示为十字架
+        // 确保 updateToolStatus 包含十字光标判定
+        // 确保 updateToolStatus 包含橡皮状态判定
+        function updateToolStatus() {
+            const container = document.getElementById('canvasContainer');
+            if (paintMode !== 'none' || comboMode || stampMode === 'active' || stampMode === 'eraser') {
+                container.style.cursor = 'crosshair';
+            }
+            draw();
+        }
+
+
+
+
         // 修改 onMouseDown 的这部分逻辑
         /* 在原 onMouseDown 函数中：
            if (idx !== -1) setActiveRegion(idx);
@@ -8651,15 +9190,7 @@ ctx.translate(0, Math.round(charY));
             });
             region.lines = newLines;
         }
-        // 切换涂鸦工具的 UI 激活状态
-        // 修改 updateToolStatus
-        function updateToolStatus() {
-            const container = document.getElementById('canvasContainer');
-            if (paintMode !== 'none' || comboMode) {
-                container.style.cursor = 'crosshair';
-            }
-            draw();
-        }
+
 
         /**
         * 导出当前页面的 JSON 数据
