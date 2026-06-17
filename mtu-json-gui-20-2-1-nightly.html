@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v20.0.15)</title>
+    <title>MTU 嵌字编辑器 (v20.2.1)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -636,6 +636,7 @@
 
                 <div class="flex flex-col gap-2">
                     <button id="drawModeBtnRight" class="rt-btn text-yellow-500 border-yellow-500/30" title="拖拽新增行框">＋</button>
+                    <button id="penModeBtnRight" class="rt-btn text-cyan-400 border-cyan-500/30" title="钢笔工具新建曲线文字：点击绘制辅助曲线锚点，长按拖拽拉出平滑控制手柄，操作参考photoshop的钢笔工具">钢</button>
                     <!--
                     <button id="autoFontSizeBtnRight" class="rt-btn" title="自动字号">字</button>
                     -->
@@ -706,6 +707,44 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="flex flex-col gap-2">
+                    <button onclick="toggleRulesDialog()" class="rt-btn text-purple-400 border-purple-500/30" title="译本替换规则设置">换</button>
+                </div>
+                <div id="translationRulesDialog" class="hidden fixed top-20 right-12 z-50 bg-gray-800 border border-gray-600 p-4 rounded-lg shadow-2xl w-[480px] max-h-[75vh] flex flex-col">
+                    <div class="flex justify-between items-center mb-3 flex-none">
+                        <h3 class="text-white font-bold text-sm flex items-center gap-1">📋 译本规则替换表</h3>
+                        <button onclick="toggleRulesDialog()" class="text-gray-400 hover:text-white text-base">✕</button>
+                    </div>
+                    
+                    <div class="overflow-y-auto flex-grow mb-3 pr-1 border border-gray-700 rounded p-1 bg-gray-900/50">
+                        <table class="w-full text-left text-xs text-gray-300">
+                            <thead>
+                                <tr class="border-b border-gray-700 text-gray-400 font-bold">
+                                    <th class="py-1 px-1 w-10 text-center">正则</th>
+                                    <th class="py-1 px-1 w-10 text-center">转义</th>
+                                    <th class="py-1 px-1 w-5/12">查找内容</th>
+                                    <th class="py-1 px-1 w-5/12">替换为</th>
+                                    <th class="py-1 px-1 w-10 text-center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rulesTableBody">
+                                </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="flex justify-between items-center flex-none gap-2">
+                        <div class="flex gap-2">
+                            <button onclick="addRuleRow()" class="bg-gray-700 hover:bg-gray-600 text-white text-xs px-2.5 py-1.5 rounded font-bold transition-all">＋ 添加新行</button>
+                            <button onclick="resetToDefaultRules()" class="bg-red-900/60 hover:bg-red-700 text-red-200 hover:text-white text-xs px-2 py-1.5 rounded transition-all border border-red-700/30" title="恢复到初始默认规则">重置默认</button>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="executeRules(false)" class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1.5 rounded font-bold shadow transition-all">替换当前页</button>
+                            <button onclick="executeRules(true)" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded font-bold shadow transition-all">批量执行全书</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="flex flex-col gap-2">
                     <button class="rt-btn text-rainbow" 
                             onclick="document.getElementById('rtColorPicker').click()" 
@@ -923,7 +962,17 @@
         let stampSource = null;       // 模仿圈采样点图片绝对坐标 {x, y}
         let stampOffset = null;       // 两个圆圈锁定后的图片绝对位移矢量 {x, y}
         let isStampDrawing = false;   // 左键连续涂抹仿制状态
+        
         let isStampErasing = false;   // [新增] 图章橡皮连续擦除状态锁
+        let isPenMode = false;              // 钢笔模式激活状态
+        let penSelectedNodeIdx = -1;       // 选中的曲线节点索引
+        let penSelectedHandleType = null;  // 选中的把手类型: 'anchor' | 'cp1' | 'cp2'
+        let isPenDragging = false;         // 是否正在拉手柄
+        // 在原有的变量下方追加：
+        let activePenNodeIdx = -1; // 🌟 [新增] 当前持久选中的锚点索引（按下 Delete 键时会删除它）
+
+
+
 
         // --- 在脚本顶部的变量定义区 ---
         const mainCanvas = document.getElementById('mainCanvas');
@@ -1072,7 +1121,292 @@
         const autoFillBtnRight = document.getElementById('autoFillBtnRight');
         const paintOpacityRange = document.getElementById('paintOpacityRange');
         const paintOpacityValue = document.getElementById('paintOpacityValue');
+        const penModeBtnRight = document.getElementById('penModeBtnRight');
 
+
+
+
+        /**
+         * 【新增】一键重置回官方默认规则
+         */
+        function resetToDefaultRules() {
+            if (confirm("确定要重置为默认替换规则吗？这会清空你当前列表里所有自行修改的内容！")) {
+                // 深拷贝默认规则，防止指针污染
+                replacementRules = JSON.parse(JSON.stringify(DEFAULT_REPLACEMENT_RULES));
+                // 同步到本地缓存
+                localStorage.setItem('mtu_custom_replacement_rules', JSON.stringify(replacementRules));
+                // 重新刷新表格显示
+                renderRulesTable();
+                alert("已成功恢复默认替换规则！");
+            }
+        }
+        // =========================================================================
+        // 🌟 【核心修改】定义你的默认替换规则矩阵 (可根据需要自行增删修改)
+        // =========================================================================
+
+        // =========================================================================
+        // 🌟 【方案一】后台静默执行的系统固定规则（界面上不显示）
+        // =========================================================================
+        const SYSTEM_FIXED_RULES = [
+            { regex: false, escape: false, find: "...", replace: "…" },               // 规则1：把三个点替换为标准全角省略号
+            { regex: false, escape: false, find: "⋯", replace: "…" },
+        ];
+
+        // 用户的自定义规则列表（初始只有一行空白）
+        let replacementRules = JSON.parse(localStorage.getItem('mtu_custom_replacement_rules')) || [
+            { regex: false, escape: false, find: "", replace: "" }
+        ];
+        /**
+        * 切换替换表弹窗的显示状态
+        */
+        function toggleRulesDialog() {
+            const dialog = document.getElementById('translationRulesDialog');
+            dialog.classList.toggle('hidden');
+            if (!dialog.classList.contains('hidden')) {
+                // 如果打开了，隐藏另一个查找对话框，防止干扰
+                const replaceDialog = document.getElementById('replaceDialog');
+                if(replaceDialog) replaceDialog.classList.add('hidden');
+                renderRulesTable();
+            }
+        }
+
+        /**
+        * 动态高精度渲染替换表行数据
+        */
+        function renderRulesTable() {
+            const tbody = document.getElementById('rulesTableBody');
+            tbody.innerHTML = '';
+            
+            replacementRules.forEach((rule, idx) => {
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-gray-800 hover:bg-gray-800/30 transition-colors";
+                tr.innerHTML = `
+                    <td class="py-1.5 px-1 text-center">
+                        <input type="checkbox" class="accent-blue-600 cursor-pointer w-3.5 h-3.5" ${rule.regex ? 'checked' : ''} onchange="updateRuleField(${idx}, 'regex', this.checked)">
+                    </td>
+                    <td class="py-1.5 px-1 text-center">
+                        <input type="checkbox" class="accent-green-600 cursor-pointer w-3.5 h-3.5" ${rule.escape ? 'checked' : ''} onchange="updateRuleField(${idx}, 'escape', this.checked)">
+                    </td>
+                    <td class="py-1.5 px-1">
+                        <input type="text" class="w-full bg-gray-950 border border-gray-700 rounded px-1.5 py-0.5 text-white text-xs outline-none focus:border-blue-500 font-mono" value="${escapeHtmlForInput(rule.find)}" oninput="updateRuleField(${idx}, 'find', this.value)" placeholder="查找内容...">
+                    </td>
+                    <td class="py-1.5 px-1">
+                        <input type="text" class="w-full bg-gray-950 border border-gray-700 rounded px-1.5 py-0.5 text-white text-xs outline-none focus:border-green-500 font-mono" value="${escapeHtmlForInput(rule.replace)}" oninput="updateRuleField(${idx}, 'replace', this.value)" placeholder="替换为...">
+                    </td>
+                    <td class="py-1.5 px-1 text-center">
+                        <button onclick="deleteRuleRow(${idx})" class="text-gray-500 hover:text-red-400 font-bold text-sm px-1" title="删除此行">✕</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        /**
+        * 实时保存单个输入框或勾选框的变动并落盘
+        */
+        function updateRuleField(index, field, value) {
+            if (replacementRules[index]) {
+                replacementRules[index][field] = value;
+                localStorage.setItem('mtu_custom_replacement_rules', JSON.stringify(replacementRules));
+            }
+        }
+
+        /**
+        * 添加一条全新空白替换规则
+        */
+        function addRuleRow() {
+            replacementRules.push({ regex: false, escape: false, find: "", replace: "" });
+            localStorage.setItem('mtu_custom_replacement_rules', JSON.stringify(replacementRules));
+            renderRulesTable();
+        }
+
+        /**
+        * 删除指定行规则
+        */
+        function deleteRuleRow(index) {
+            replacementRules.splice(index, 1);
+            if (replacementRules.length === 0) {
+                replacementRules.push({ regex: false, escape: false, find: "", replace: "" });
+            }
+            localStorage.setItem('mtu_custom_replacement_rules', JSON.stringify(replacementRules));
+            renderRulesTable();
+        }
+
+        /**
+        * 辅助字符串解义函数（将 \\n, \\t 恢复为原生换行和制表符）
+        */
+        function unescapeRuleString(str) {
+            return str.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r');
+        }
+
+        /**
+        * HTML转义保护，防止特殊字符（如引号）破坏输入框中的初始值
+        */
+        function escapeHtmlForInput(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        /**
+        * 核心文本替换处理机：将定义的规则矩阵串联应用到译文文本上
+        */
+        function applyRulesToTranslation(text, validRules) {
+            if (!text) return text;
+            let newText = text;
+            
+            // 【系统深度整合】由于编辑器内部是用 【BR】 存储换行符的
+            // 为了支持跨行正则/查找或通过 \n 替换换行，我们先将 【BR】 临时拉平为标准的 \n 字符
+            newText = newText.replace(/【BR】/g, '\n');
+
+            validRules.forEach(rule => {
+                let findPattern = rule.find;
+                let replacePattern = rule.replace;
+                if (!findPattern) return;
+
+                // 如果开启了转义，处理转义符号
+                if (rule.escape) {
+                    findPattern = unescapeRuleString(findPattern);
+                    replacePattern = unescapeRuleString(replacePattern);
+                }
+
+                if (rule.regex) {
+                    try {
+                        // 编译带全局标记的正则表达式
+                        const regex = new RegExp(findPattern, 'g');
+                        newText = newText.replace(regex, replacePattern);
+                    } catch (e) {
+                        console.error("替换规则中的正则语法有误: " + findPattern, e);
+                    }
+                } else {
+                    // 普通明文替换：使用 split/join 彻底消灭原生 replace 只能替换首个对象的缺陷
+                    newText = newText.split(findPattern).join(replacePattern);
+                }
+            });
+
+            // 重新转换为标准 【BR】，最后送入原有自带的富文本清洗函数规范化首尾
+            newText = newText.replace(/\n/g, '【BR】');
+            return typeof cleanTranslationText === 'function' ? cleanTranslationText(newText) : newText;
+        }
+
+        /**
+        * 批量执行替换表核心业务函数
+        * @param {boolean} isGlobal - false 代表处理当前页，true 代表处理批量项目全书
+        */
+        function executeRules(isGlobal) {
+            // 1. 获取用户自己写的有效规则
+            const userRules = replacementRules.filter(r => r.find !== "");
+            
+            // 2. 将系统隐藏规则和用户规则合并（系统固定规则排在最前面优先执行）
+            const allRules = [...SYSTEM_FIXED_RULES, ...userRules];
+            
+            if (allRules.length === 0) {
+                alert("没有任何可执行的替换规则！");
+                return;
+            }
+
+            if (isGlobal) {
+                // --- 批量模式 ---
+                if (typeof matchedFiles === 'undefined' || matchedFiles.length === 0) {
+                    alert("请先通过顶栏批量导入项目文件夹！");
+                    return;
+                }
+                // 注意：这里的提示人数和执行传入，都换成 allRules 
+                if (!confirm(`确定要在全书顺序执行这 ${allRules.length} 条替换规则吗？(包含系统内置规则)`)) return;
+
+                if (typeof saveCurrentStateToMemory === 'function') saveCurrentStateToMemory();
+
+                let modifiedPagesCount = 0;
+                matchedFiles.forEach(file => {
+                    let pageChanged = false;
+                    file.regions.forEach(r => {
+                        if (r.translation) {
+                            const oldTrans = r.translation;
+                            // 🌟 这里传入合并后的 allRules
+                            r.translation = applyRulesToTranslation(r.translation, allRules);
+                            if (oldTrans !== r.translation) pageChanged = true;
+                        }
+                    });
+                    if (pageChanged) modifiedPagesCount++;
+                });
+
+                if (typeof loadFile === 'function') loadFile(currentFileIndex);
+                alert(`批量替换规则执行完毕！共修改了 ${modifiedPagesCount} 页的译文。`);
+            } else {
+                // --- 单页模式 ---
+                if (typeof regions === 'undefined' || regions.length === 0) {
+                    alert("当前页没有任何可被替换的文本框。");
+                    return;
+                }
+
+                let changedBlocksCount = 0;
+                regions.forEach(r => {
+                    if (r.translation) {
+                        const oldTrans = r.translation;
+                        // 🌟 这里传入合并后的 allRules
+                        r.translation = applyRulesToTranslation(r.translation, allRules);
+                        if (oldTrans !== r.translation) changedBlocksCount++;
+                    }
+                });
+
+                if (changedBlocksCount > 0) {
+                    if (typeof draw === 'function') draw();
+                    if (typeof activeRegionIndex !== 'undefined' && activeRegionIndex !== -1) {
+                        if (typeof setActiveRegion === 'function') setActiveRegion(activeRegionIndex);
+                    }
+                    alert(`当前页替换规则执行成功，已更新 ${changedBlocksCount} 个选框。`);
+                } else {
+                    alert("未匹配到任何内容，当前页译文无变动。");
+                }
+            }
+        }
+
+        if (penModeBtnRight) {
+            penModeBtnRight.onclick = function(e) {
+                if (e) e.preventDefault();
+                try {
+                    // 安全调用清理器
+                    if (typeof clearAllTools === 'function') clearAllTools();
+                    
+                    isPenMode = !isPenMode;
+                    this.classList.toggle('mask-active', isPenMode);
+                    
+                    const container = document.getElementById('canvasContainer');
+                    if (container) {
+                        container.style.cursor = isPenMode ? 'crosshair' : 'grab';
+                    }
+                    
+                    // 安全判定当前选中的区域
+                    if (isPenMode && typeof activeRegionIndex !== 'undefined' && activeRegionIndex !== -1) {
+                        if (typeof regions !== 'undefined' && regions[activeRegionIndex]) {
+                            const r = regions[activeRegionIndex];
+                            if (!r.isCurvePath) {
+                                const [x1, y1, x2, y2] = r.box || [100, 100, 300, 300];
+                                r.isCurvePath = true;
+                                r.pathNodes = [
+                                    { x: x1, y: (y1+y2)/2, cp1: {x: x1, y: (y1+y2)/2}, cp2: {x: x1 + 50, y: (y1+y2)/2} },
+                                    { x: x2, y: (y1+y2)/2, cp1: {x: x2 - 50, y: (y1+y2)/2}, cp2: {x: x2, y: (y1+y2)/2} }
+                                ];
+                                if (!r.lines) r.lines = [];
+                            }
+                        }
+                    }
+                    
+                    // 安全触发重绘
+                    if (typeof draw === 'function') draw();
+                } catch (err) {
+                    console.error("【钢笔工具保护器】拦截到内部异常，防止了整页崩溃:", err);
+                }
+            };
+        }
+
+        // 注册键盘 P 键快捷键
+        window.addEventListener('keydown', (e) => {
+            if (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT') return;
+            if (e.key.toLowerCase() === 'p') {
+                e.preventDefault();
+                penModeBtnRight.click();
+            }
+        });
         // [新增] 绑定图章按钮点击事件
         // [新增] 绑定图章按钮点击事件
         document.getElementById('cloneStampBtn').onclick = function() {
@@ -1103,7 +1437,173 @@
             }
         });
 
+        // 🌟 [新增] 修复崩溃：渲染贝塞尔曲线骨架手柄的 UI 辅助函数
+        function renderCurvePathUI(region, canvasCtx) {
+            canvasCtx.save();
+            // 【熔断修补】控制手柄圆圈半径在屏幕上最低保留 2.5 像素，最高不超过 15 像素
+            const radius = Math.max(4, Math.min(5, 5 / viewState.scale));
 
+            // 1. 绘制主体三阶贝塞尔骨架曲线线网
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(region.pathNodes[0].x, region.pathNodes[0].y);
+            for (let i = 0; i < region.pathNodes.length - 1; i++) {
+                const curr = region.pathNodes[i];
+                const next = region.pathNodes[i + 1];
+                canvasCtx.bezierCurveTo(curr.cp2.x, curr.cp2.y, next.cp1.x, next.cp1.y, next.x, next.y);
+            }
+            canvasCtx.strokeStyle = '#22d3ee'; // 青色骨架路径线
+            // 【熔断修补】主骨架路径线在屏幕上最细不低于 0.6 像素，最粗不超过 4 像素
+            canvasCtx.lineWidth = Math.max(2, Math.min(3, 2 / viewState.scale));
+            canvasCtx.stroke();
+
+            // 2. 绘制每一个锚点以及控制手柄把手
+            region.pathNodes.forEach((node, idx) => {
+                // 【熔断修补】手柄控制连线最细不低于 0.4 像素
+                canvasCtx.lineWidth = Math.max(1, Math.min(1, 2 / viewState.scale));
+                
+                // 绘制入控制手柄连线 cp1
+                canvasCtx.beginPath(); canvasCtx.moveTo(node.x, node.y); canvasCtx.lineTo(node.cp1.x, node.cp1.y);
+                canvasCtx.strokeStyle = '#a855f7'; canvasCtx.stroke();
+                canvasCtx.beginPath(); canvasCtx.arc(node.cp1.x, node.cp1.y, radius - 1, 0, Math.PI * 2);
+                canvasCtx.fillStyle = '#c084fc'; canvasCtx.fill();
+
+                // 绘制出控制手柄连线 cp2
+                canvasCtx.beginPath(); canvasCtx.moveTo(node.x, node.y); canvasCtx.lineTo(node.cp2.x, node.cp2.y);
+                canvasCtx.strokeStyle = '#a855f7'; canvasCtx.stroke();
+                canvasCtx.beginPath(); canvasCtx.arc(node.cp2.x, node.cp2.y, radius - 1, 0, Math.PI * 2);
+                canvasCtx.fillStyle = '#c084fc'; canvasCtx.fill();
+
+                // 找到这一段：
+                // 绘制锚点核心本体（实心青色小方块）
+                // canvasCtx.fillStyle = '#06b6d4';
+                // canvasCtx.fillRect(node.x - radius, node.y - radius, radius * 2, radius * 2);
+
+                // 修改为：
+                // 🌟 [新增高亮反馈]：判断当前节点 idx 是否等于 activePenNodeIdx
+                if (idx === activePenNodeIdx) {
+                    canvasCtx.fillStyle = '#ef4444'; // 被选中的点变成亮红色方块
+                    canvasCtx.fillRect(node.x - (radius + 2), node.y - (radius + 2), (radius + 2) * 2, (radius + 2) * 2);
+                    canvasCtx.strokeStyle = '#ffffff';
+                    canvasCtx.strokeRect(node.x - (radius + 2), node.y - (radius + 2), (radius + 2) * 2, (radius + 2) * 2);
+                } else {
+                    canvasCtx.fillStyle = '#06b6d4'; // 普通锚点保持原版青色
+                    canvasCtx.fillRect(node.x - radius, node.y - radius, radius * 2, radius * 2);
+                    canvasCtx.strokeStyle = '#ffffff';
+                    canvasCtx.strokeRect(node.x - radius, node.y - radius, radius * 2, radius * 2);
+                }
+                // canvasCtx.strokeStyle = '#ffffff';
+                // canvasCtx.strokeRect(node.x - radius, node.y - radius, radius * 2, radius * 2);
+            });
+
+            canvasCtx.restore();
+        }
+
+        // 🌟 [新增] 修复崩溃：一键清理所有笔刷、图章、钢笔等互斥状态的公共函数
+        function clearAllTools() {
+            isPenMode = false;
+            maskEditMode = 'none';
+            paintMode = 'none';
+            comboMode = false;
+            stampMode = 'none';
+            isDrawingMode = false;
+            
+            // 自动重置所有右侧工具栏按钮的红色高亮状态
+            const toolBtns = [
+                document.getElementById('penModeBtnRight'),
+                document.getElementById('maskBrushBtn'),
+                document.getElementById('maskEraserBtn'),
+                document.getElementById('paintBrushBtn'),
+                document.getElementById('paintEraserBtn'),
+                document.getElementById('comboModeBtn'),
+                document.getElementById('cloneStampBtn'),
+                document.getElementById('stampEraserBtn'),
+                document.getElementById('drawModeBtnRight')
+            ];
+            toolBtns.forEach(btn => {
+                if (btn) btn.classList.remove('mask-active', 'bg-yellow-600', 'text-white');
+            });
+            if (document.getElementById('canvasContainer')) {
+                document.getElementById('canvasContainer').style.cursor = 'grab';
+            }
+        }
+        // 计算三阶贝塞尔曲线上的点
+        function getCubicBezierPoint(p0, cp1, cp2, p1, t) {
+            const mt = 1 - t;
+            const mt2 = mt * mt;
+            const mt3 = mt2 * mt;
+            const t2 = t * t;
+            const t3 = t2 * t;
+            return {
+                x: mt3 * p0.x + 3 * mt2 * t * cp1.x + 3 * mt * t2 * cp2.x + t3 * p1.x,
+                y: mt3 * p0.y + 3 * mt2 * t * cp1.y + 3 * mt * t2 * cp2.y + t3 * p1.y
+            };
+        }
+
+        // 建立曲线等距查找表 (LUT)
+        function bakeCurveLUT(nodes, samplesPerSegment = 100) {
+            if (!nodes || nodes.length < 2) return null;
+            const lut = [];
+            let totalLength = 0;
+            lut.push({ s: 0, t: 0, segmentIdx: 0, x: nodes[0].x, y: nodes[0].y, angle: 0 });
+
+            for (let i = 0; i < nodes.length - 1; i++) {
+                const n0 = nodes[i];
+                const n1 = nodes[i + 1];
+                let prevPt = { x: n0.x, y: n0.y };
+
+                for (let j = 1; j <= samplesPerSegment; j++) {
+                    const t = j / samplesPerSegment;
+                    const pt = getCubicBezierPoint(n0, n0.cp2, n1.cp1, n1, t);
+                    const dx = pt.x - prevPt.x;
+                    const dy = pt.y - prevPt.y;
+                    const dist = Math.hypot(dx, dy);
+                    totalLength += dist;
+
+                    lut.push({
+                        s: totalLength,
+                        t: t,
+                        segmentIdx: i,
+                        x: pt.x,
+                        y: pt.y,
+                        angle: Math.atan2(dy, dx) // 切线角度
+                    });
+                    prevPt = pt;
+                }
+            }
+            return { lut, totalLength };
+        }
+
+        // 精准反查给定弧长距离下的物理坐标与切线角度
+        function getPointOnCurveAtDistance(lutObj, distance) {
+            if (!lutObj || lutObj.lut.length === 0) return null;
+            const { lut, totalLength } = lutObj;
+            
+            // 边界安全防护
+            if (distance <= 0) return { x: lut[0].x, y: lut[0].y, angle: lut[0].angle };
+            if (distance >= totalLength) {
+                const last = lut[lut.length - 1];
+                return { x: last.x, y: last.y, angle: last.angle };
+            }
+
+            // 二分法高速检索查找表
+            let low = 0, high = lut.length - 1;
+            while (low < high - 1) {
+                const mid = (low + high) >> 1;
+                if (lut[mid].s < distance) low = mid;
+                else high = mid;
+            }
+
+            // 线性插值平滑处理
+            const p0 = lut[low];
+            const p1 = lut[high];
+            if (p1.s === p0.s) return p0;
+            const ratio = (distance - p0.s) / (p1.s - p0.s);
+            return {
+                x: p0.x + (p1.x - p0.x) * ratio,
+                y: p0.y + (p1.y - p0.y) * ratio,
+                angle: p0.angle + (p1.angle - p0.angle) * ratio
+            };
+        }
         // --- [新增] 图章硬核绝对像素橡皮引擎 ---
         function handleStampErase(pos) {
             if (!currentImage) return;
@@ -1112,17 +1612,20 @@
             // 物理半径：直径为 maskBrushSize
             const r = maskBrushSize * 0.5; 
 
+            // 【核心新增】
+            const snapX = Math.floor(pos.x) + 0.5;
+            const snapY = Math.floor(pos.y) + 0.5;
+
             // 计算当前释放位置在底图上影响的绝对像素包围框
-            const targetLeft = Math.floor(pos.x - r);
-            const targetTop = Math.floor(pos.y - r);
-            const targetRight = Math.ceil(pos.x + r);
-            const targetBottom = Math.ceil(pos.y + r);
+            const targetLeft = Math.floor(snapX - r);
+            const targetTop = Math.floor(snapY - r);
+            const targetRight = Math.ceil(snapX + r);
+            const targetBottom = Math.ceil(snapY + r);
 
             const width = targetRight - targetLeft;
             const height = targetBottom - targetTop;
             if (width <= 0 || height <= 0) return;
 
-            // 创建轻量级内存离屏画布
             const maskCanvas = document.createElement('canvas');
             maskCanvas.width = width;
             maskCanvas.height = height;
@@ -1131,15 +1634,14 @@
             const maskImgData = maskCtx.createImageData(width, height);
             const data = maskImgData.data;
 
-            // 遍历物理像素格点中心，严格按圆方程计算出 100% 硬度的擦除饼图
             for (let y = targetTop; y < targetBottom; y++) {
                 for (let x = targetLeft; x < targetRight; x++) {
-                    const dist_sq = Math.pow((x + 0.5) - pos.x, 2) + Math.pow((y + 0.5) - pos.y, 2);
+                    // 🌟 同样改用固定的 snapX 和 snapY
+                    const dist_sq = Math.pow((x + 0.5) - snapX, 2) + Math.pow((y + 0.5) - snapY, 2);
                     if (dist_sq <= r * r) {
                         const localX = x - targetLeft;
                         const localY = y - targetTop;
                         const idx = (localY * width + localX) * 4;
-                        // 写入 100% 不透明的色块，用于作为裁切区域
                         data[idx+3] = 255; 
                     }
                 }
@@ -1182,14 +1684,18 @@
             isCanvasDirty = true;
 
             // 1. 半径允许为 0.5 (对应 1 像素直径单点)
-            const r = maskBrushSize * 0.5; // 让 maskBrushSize 直接代表绝对像素直径 
+            const r = maskBrushSize * 0.5; 
+
+            // 【核心新增】绘图坐标同步像素格子对齐，确保盖印出来的印章不随移动方向发生边缘变异
+            const snapX = Math.floor(pos.x) + 0.5;
+            const snapY = Math.floor(pos.y) + 0.5;
 
             // 计算当前释放位置在底图上影响的绝对像素包围框
-            const targetLeft = Math.floor(pos.x - r);
-            const targetTop = Math.floor(pos.y - r);
-            const targetRight = Math.ceil(pos.x + r);
-            const targetBottom = Math.ceil(pos.y + r);
-
+            const targetLeft = Math.floor(snapX - r);
+            const targetTop = Math.floor(snapY - r);
+            const targetRight = Math.ceil(snapX + r);
+            const targetBottom = Math.ceil(snapY + r);
+            
             const width = targetRight - targetLeft;
             const height = targetBottom - targetTop;
             if (width <= 0 || height <= 0) return;
@@ -1202,7 +1708,7 @@
             const srcTop = targetTop - rDy;
 
             // =========================================================================
-            // 画布①：临时组合画布 —— 用来将原图和涂鸦层拼成一个完整的“方形内容块”
+            // 画布①：临时组合画布 
             // =========================================================================
             const combinedCanvas = document.createElement('canvas');
             combinedCanvas.width = width;
@@ -1210,13 +1716,12 @@
             const combinedCtx = combinedCanvas.getContext('2d');
             combinedCtx.imageSmoothingEnabled = false;
 
-            // 在常规混合模式下，把原图和涂鸦层严丝合缝地叠在一起
             combinedCtx.globalCompositeOperation = 'source-over';
             combinedCtx.drawImage(currentImage, srcLeft, srcTop, width, height, 0, 0, width, height);
             combinedCtx.drawImage(paintCanvas, srcLeft, srcTop, width, height, 0, 0, width, height);
 
             // =========================================================================
-            // 画布②：纯净遮罩画布 —— 用 ImageData 动态计算出 100% 纯硬度的绝对像素圆
+            // 画布②：纯净遮罩画布
             // =========================================================================
             const maskCanvas = document.createElement('canvas');
             maskCanvas.width = width;
@@ -1226,15 +1731,16 @@
             const maskImgData = maskCtx.createImageData(width, height);
             const data = maskImgData.data;
 
-            // 遍历物理像素格点中心，严格按圆方程过滤，100% 消灭边缘抗锯齿
+            // 遍历物理像素格点中心
             for (let y = targetTop; y < targetBottom; y++) {
                 for (let x = targetLeft; x < targetRight; x++) {
-                    const dist_sq = Math.pow((x + 0.5) - pos.x, 2) + Math.pow((y + 0.5) - pos.y, 2);
+                    // 🌟 同样改用固定的 snapX 和 snapY 进行运算
+                    const dist_sq = Math.pow((x + 0.5) - snapX, 2) + Math.pow((y + 0.5) - snapY, 2);
                     if (dist_sq <= r * r) {
                         const localX = x - targetLeft;
                         const localY = y - targetTop;
                         const idx = (localY * width + localX) * 4;
-                        data[idx+3] = 255; // 圆内像素设为 100% 完全不透明
+                        data[idx+3] = 255; 
                     }
                 }
             }
@@ -3528,6 +4034,155 @@
         container.addEventListener('mousedown', (e) => {
             const pos = getMousePos(e); 
 
+            // 在 container.addEventListener('mousedown', (e) => { 内部顶部紧跟 pos 计算之后注入：
+            // =========================================================================
+            // 🌟【完美修复版】钢笔工具鼠标按下事件拦截器
+            // =========================================================================
+            // =========================================================================
+            // 🌟【无懈可击完全体】钢笔工具鼠标按下事件拦截器（修复空白创建崩溃）
+            // =========================================================================
+            if (isPenMode && e.button === 0) {
+                if (isSpacePressed) return; // 空格键平移画布优先
+                activePenNodeIdx = -1; 
+                let hitSomething = false;
+                // 【熔断修补】确保在高倍放大时，手柄点的点击判定半径在屏幕上最低保留 4 像素的容错热区
+                const hitRadius = Math.max(4, Math.min(36, 12 / viewState.scale));
+
+                // 1. 🔍【安全保护层】：安全获取当前活动译文框，防止 null 报错
+                const r = (typeof activeRegionIndex !== 'undefined' && activeRegionIndex !== -1) ? regions[activeRegionIndex] : null;
+
+                // 2. 🎯 如果当前已经选中的是曲线框，优先检查鼠标是否点中了已有的锚点或手柄
+                if (r && r.isCurvePath && r.pathNodes) {
+                    for (let i = 0; i < r.pathNodes.length; i++) {
+                        const node = r.pathNodes[i];
+                        if (node.isSmooth === undefined) node.isSmooth = true; 
+
+                        // A. 点中锚点本体
+                        if (Math.hypot(pos.x - node.x, pos.y - node.y) < hitRadius) {
+                            penSelectedNodeIdx = i; activePenNodeIdx = i; hitSomething = true;
+                            if (e.altKey) {
+                                node.isSmooth = true; penSelectedHandleType = 'alt-pull'; isPenDragging = true;
+                            } else {
+                                penSelectedHandleType = 'anchor'; isPenDragging = true;
+                            }
+                            break;
+                        }
+
+                        // B. 点中入控制点 cp1
+                        if (Math.hypot(pos.x - node.cp1.x, pos.y - node.cp1.y) < hitRadius) {
+                            penSelectedNodeIdx = i; activePenNodeIdx = i; hitSomething = true;
+                            penSelectedHandleType = 'cp1'; isPenDragging = true;
+                            if (e.altKey) node.isSmooth = false;
+                            break;
+                        }
+
+                        // C. 点中出控制点 cp2
+                        if (Math.hypot(pos.x - node.cp2.x, pos.y - node.cp2.y) < hitRadius) {
+                            penSelectedNodeIdx = i; activePenNodeIdx = i; hitSomething = true;
+                            penSelectedHandleType = 'cp2'; isPenDragging = true;
+                            if (e.altKey) node.isSmooth = false;
+                            break;
+                        }
+                    }
+                }
+
+                // 3. 🚀【核心修复层】：如果没点中任何手柄，执行“Ctrl捏线”或“加点 / 续点 / 空白全新创建”
+                if (!hitSomething) {
+                    let closestLutItem = null;
+                    // 【熔断修补】确保在高倍放大时，鼠标靠近线条触发“加点/捏线”的物理判定距离最低不低于 5 像素
+                    let minLineDist = Math.max(5, Math.min(45, 15 / viewState.scale));
+
+                    // 🌟【防护核心】：只有当有效选中曲线图层时，才去执行查找表烘焙，彻底规避 null 崩溃！
+                    if (r && r.isCurvePath && r.pathNodes) {
+                        const lutObj = bakeCurveLUT(r.pathNodes);
+                        if (lutObj && lutObj.lut) {
+                            for (let item of lutObj.lut) {
+                                const dist = Math.hypot(pos.x - item.x, pos.y - item.y);
+                                if (dist < minLineDist) { minLineDist = dist; closestLutItem = item; }
+                            }
+                        }
+                    }
+
+                    // 🎯 交互分支 A：点中了现有线条，且按住了 Ctrl 键 -> 触发直接捏取拉伸线条本身！
+                    if (closestLutItem !== null && e.ctrlKey && r) {
+                        isCanvasDirty = true;
+                        penSelectedNodeIdx = closestLutItem.segmentIdx; 
+                        penSelectedHandleType = 'segment-line';         
+                        isPenDragging = true;
+                        hitSomething = true;
+
+                        const n0 = r.pathNodes[penSelectedNodeIdx];
+                        const n1 = r.pathNodes[penSelectedNodeIdx + 1];
+                        transformState.startCp2 = { x: n0.cp2.x, y: n0.cp2.y };
+                        transformState.startCp1 = { x: n1.cp1.x, y: n1.cp1.y };
+                        transformState.startMouse = { x: pos.x, y: pos.y }; 
+                    }
+                    // 🎯 交互分支 B：没有按住 Ctrl 键，进行正常的生产型加点、续点或图层创建
+                    else if (!e.ctrlKey) {
+                        const defaultLength = 35 / viewState.scale; 
+                        const newNode = { x: pos.x, y: pos.y, cp1: {x:pos.x, y:pos.y}, cp2: {x:pos.x, y:pos.y}, isSmooth: true };
+
+                        if (r && r.isCurvePath && r.pathNodes) {
+                            // ------ 【分支 1】当前已选中了曲线文本框，在其曲线上加点或续点 ------
+                            isCanvasDirty = true;
+                            let tangentAngle = 0;
+
+                            if (closestLutItem !== null) {
+                                // 线条中间插点
+                                tangentAngle = closestLutItem.angle; 
+                                newNode.cp1 = { x: pos.x - defaultLength * Math.cos(tangentAngle), y: pos.y - defaultLength * Math.sin(tangentAngle) };
+                                newNode.cp2 = { x: pos.x + defaultLength * Math.cos(tangentAngle), y: pos.y + defaultLength * Math.sin(tangentAngle) };
+                                const insertIdx = closestLutItem.segmentIdx + 1;
+                                r.pathNodes.splice(insertIdx, 0, newNode);
+                                penSelectedNodeIdx = insertIdx; activePenNodeIdx = insertIdx;
+                            } else {
+                                // 线条末尾续点
+                                if (r.pathNodes.length > 0) {
+                                    const lastNode = r.pathNodes[r.pathNodes.length - 1];
+                                    tangentAngle = Math.atan2(pos.y - lastNode.y, pos.x - lastNode.x);
+                                }
+                                newNode.cp1 = { x: pos.x - defaultLength * Math.cos(tangentAngle), y: pos.y - defaultLength * Math.sin(tangentAngle) };
+                                newNode.cp2 = { x: pos.x + defaultLength * Math.cos(tangentAngle), y: pos.y + defaultLength * Math.sin(tangentAngle) };
+                                r.pathNodes.push(newNode);
+                                penSelectedNodeIdx = r.pathNodes.length - 1; activePenNodeIdx = r.pathNodes.length - 1;
+                            }
+
+                            penSelectedHandleType = 'cp2'; 
+                            isPenDragging = true;
+                            hitSomething = true;
+                            if (typeof calculateBoxFromCurve === 'function') calculateBoxFromCurve(r);
+
+                        } else {
+                            // ------ 【分支 2】当前没选框（或选的是常规框），点击空白处一键成功创建全新曲线图层！ ------
+                            isCanvasDirty = true;
+                            const newCurveRegion = {
+                                box: [pos.x, pos.y - 50, pos.x + 200, pos.y + 50],
+                                translation: "新曲线文字",
+                                font_size: 24,
+                                isCurvePath: true,
+                                direction: 'h', // 🌟【新增保护】：显式初始化方向为横排，防止首次点击“属”时数据断档
+                                pathNodes: [
+                                    { x: pos.x, y: pos.y, cp1: { x: pos.x, y: pos.y }, cp2: { x: pos.x + 50, y: pos.y }, isSmooth: true },
+                                    { x: pos.x + 150, y: pos.y, cp1: { x: pos.x + 100, y: pos.y }, cp2: { x: pos.x + 150, y: pos.y }, isSmooth: true }
+                                ],
+                                lines: [] 
+                            };
+                            regions.push(newCurveRegion);
+                            activeRegionIndex = regions.length - 1;
+                            
+                            penSelectedNodeIdx = 1; 
+                            activePenNodeIdx = 1;
+                            penSelectedHandleType = 'anchor'; 
+                            isPenDragging = false; 
+                            hitSomething = true;
+                            if (typeof setActiveRegion === 'function') setActiveRegion(activeRegionIndex);
+                        }
+                    }
+                }
+
+                if (hitSomething) { draw(); return; } 
+            }
+
             // =========================================================================
             // 🌟 [核心修复 1] 仿制图章绝对高优先级拦截门（必须放在最顶端，防止右键被吞）
             // =========================================================================
@@ -3627,6 +4282,88 @@
             currentMousePos = pos;
             renderUI(e); // 始终保证 UI 层刷新
 
+            // 在 container.addEventListener('mousemove', (e) => { 内部顶部处理：
+            if (isPenMode && isPenDragging && penSelectedNodeIdx !== -1) {
+                const r = regions[activeRegionIndex];
+                const node = r.pathNodes[penSelectedNodeIdx];
+                isCanvasDirty = true;
+
+                // 🌟 动态侦听：如果在拖拽手柄的中途按下了 Alt 键，也立刻瞬时切断手柄联动
+                if (e.altKey && (penSelectedHandleType === 'cp1' || penSelectedHandleType === 'cp2')) {
+                    node.isSmooth = false;
+                }
+
+                if (penSelectedHandleType === 'anchor') {
+                    // 1. 整体平移锚点与手柄
+                    const dx = pos.x - node.x; const dy = pos.y - node.y;
+                    node.x = pos.x; node.y = pos.y;
+                    node.cp1.x += dx; node.cp1.y += dy;
+                    node.cp2.x += dx; node.cp2.y += dy;
+                }
+                // =========================================================================
+                // 🌟【新增 PS 核心交互】：按住 Ctrl 拖拽曲线线条本体时，两端的手柄同步受力发生位移
+                // =========================================================================
+                else if (penSelectedHandleType === 'segment-line') {
+                    const n0 = r.pathNodes[penSelectedNodeIdx];      // 当前线段的左翼锚点
+                    const n1 = r.pathNodes[penSelectedNodeIdx + 1];  // 当前线段的右翼锚点
+
+                    // 计算鼠标从按下到当前位置的绝对总物理偏移量
+                    const dx = pos.x - transformState.startMouse.x;
+                    const dy = pos.y - transformState.startMouse.y;
+
+                    // 【PS 工业级算法】：将鼠标位移等量作用于左锚点的“出控制点(cp2)”和右锚点的“入控制点(cp1)”
+                    // 曲线会像橡皮筋一样顺着鼠标拉动的方向完美隆起或下陷！
+                    n0.cp2.x = transformState.startCp2.x + dx;
+                    n0.cp2.y = transformState.startCp2.y + dy;
+                    n1.cp1.x = transformState.startCp1.x + dx;
+                    n1.cp1.y = transformState.startCp1.y + dy;
+                }
+                else if (penSelectedHandleType === 'alt-pull') {
+                    // 2. 🌟 [Alt 从中心拖出手柄]
+                    node.isSmooth = true;
+                    node.cp2.x = pos.x; node.cp2.y = pos.y;
+                    // 镜像对称生成 cp1
+                    node.cp1.x = node.x - (pos.x - node.x);
+                    node.cp1.y = node.y - (pos.y - node.y);
+                }
+                else if (penSelectedHandleType === 'cp2') {
+                    // 3. 拖拽出控制点 cp2
+                    node.cp2.x = pos.x; node.cp2.y = pos.y;
+
+                    if (node.isSmooth) {
+                        // 🌟 [PS 经典平滑联动]：保持共线（方向相反），但维持 cp1 自己的原长度不发生伸缩
+                        const len1 = Math.hypot(node.cp1.x - node.x, node.cp1.y - node.y);
+                        const angle2 = Math.atan2(pos.y - node.y, pos.x - node.x);
+                        const angle1 = angle2 + Math.PI; // 调转 180 度
+                        node.cp1.x = node.x + len1 * Math.cos(angle1);
+                        node.cp1.y = node.y + len1 * Math.sin(angle1);
+                    }
+                } 
+                else if (penSelectedHandleType === 'cp1') {
+                    // 4. 拖拽入控制点 cp1
+                    node.cp1.x = pos.x; node.cp1.y = pos.y;
+
+                    if (node.isSmooth) {
+                        // 🌟 [PS 经典平滑联动]：保持共线（方向相反），但维持 cp2 自己的原长度不发生伸缩
+                        const len2 = Math.hypot(node.cp2.x - node.x, node.cp2.y - node.y);
+                        const angle1 = Math.atan2(pos.y - node.y, pos.x - node.x);
+                        const angle2 = angle1 + Math.PI;
+                        node.cp2.x = node.x + len2 * Math.cos(angle2);
+                        node.cp2.y = node.y + len2 * Math.sin(angle2);
+                    }
+                }
+
+                if (typeof calculateBoxFromCurve === 'function') calculateBoxFromCurve(r);
+                draw();
+                return;
+            }
+
+            // 辅助自动包裹函数
+            function calculateBoxFromCurve(region) {
+                const xs = region.pathNodes.flatMap(n => [n.x, n.cp1.x, n.cp2.x]);
+                const ys = region.pathNodes.flatMap(n => [n.y, n.cp1.y, n.cp2.y]);
+                region.box = [Math.min(...xs) - 20, Math.min(...ys) - 20, Math.max(...xs) + 20, Math.max(...ys) + 20];
+            }
             // =========================================================================
             // 🌟 [核心修复 2] 仿制图章持续移动克隆拦截
             // =========================================================================
@@ -3744,6 +4481,27 @@
             } else {
                 // 调用底部的核心处理函数（确保执行保存和重绘）
                 onMouseUp(e); 
+            }
+
+            // 在已有的 mouseup 处理器内部底部加入收尾：
+            if (isPenDragging) {
+                // 🌟 [PS Alt单击退化特性]：如果是 Alt 点击锚点模式，且松开时鼠标几乎没有位移（小于5像素）
+                // 说明嵌字工不需要手柄，直接把手柄全面收拢回中心，转换为直角锐角点
+                if (penSelectedHandleType === 'alt-pull') {
+                    const r = regions[activeRegionIndex];
+                    const node = r.pathNodes[penSelectedNodeIdx];
+                    if (node && Math.hypot(node.cp2.x - node.x, node.cp2.y - node.y) < 5) {
+                        node.cp1 = { x: node.x, y: node.y };
+                        node.cp2 = { x: node.x, y: node.y };
+                        node.isSmooth = false; // 永久打上非平滑印记
+                    }
+                }
+
+                isPenDragging = false;
+                penSelectedNodeIdx = -1;
+                penSelectedHandleType = null;
+                if (typeof persistCanvasData === 'function') persistCanvasData();
+                draw();
             }
         });
         // [彻底根治连粘] 禁用容器内所有元素（包括 Canvas 和对比图 img）的浏览器原生拖拽
@@ -4112,10 +4870,23 @@
                         if (typeof r.default_stroke_width !== 'undefined') r.strokeWidthRatio = r.default_stroke_width;
                         if (typeof r.letter_spacing === 'undefined') r.letter_spacing = 0;
                         // --- 修改后 ---
-                        if (r.translation) {
-                            // 强制将 [BR]、<br> 统一替换为标准 【BR】（不区分大小写）
-                            r.translation = r.translation.replace(/\[BR\]|【BR】|<br>/gi, '【BR】');
-                            r.translation = cleanTranslationText(r.translation);
+                        // 【新增】优先获取 translation_raw，如果没有再保留原本的 translation
+                        // 优先获取 translation_raw，如果没有再保留原本的 translation
+                        if (r.translation_raw !== undefined && r.translation_raw !== null) {
+                            r.translation = r.translation_raw;
+                        }
+
+                        if (r.translation) { 
+                            // 1. 先将可能存在的特殊换行符统一规范化
+                            r.translation = r.translation.replace(/\[BR\]|<br>/gi, '【BR】');
+                            
+                            // 2. 【核心新增】导入时自动静默执行系统固定规则
+                            if (typeof applyRulesToTranslation === 'function' && typeof SYSTEM_FIXED_RULES !== 'undefined') {
+                                r.translation = applyRulesToTranslation(r.translation, SYSTEM_FIXED_RULES);
+                            } else {
+                                // 如果函数还没加载完的兜底原逻辑
+                                r.translation = cleanTranslationText(r.translation);
+                            }
                         }
 
                     });
@@ -4341,8 +5112,11 @@
                 // =============================================================
                 // 【升级版】：3D 透视框（4角 + 4边中点）碰撞点击检测
                 // =============================================================
+                // 【升级版】：3D 透视框（4角 + 4边中点）碰撞点击检测
+                // =============================================================
                 if (region.isPerspective && region.points) {
-                    const clickRadius = 12 / viewState.scale; 
+                    // 【熔断修补】确保在极深缩放时，鼠标点击判定半径最低保留 3 像素的容错热区
+                    const clickRadius = Math.max(3, Math.min(36, 12 / viewState.scale));
                     
                     // A. 优先检测是否点中了 4 个角 (0, 1, 2, 3)
                     for (let i = 0; i < 4; i++) {
@@ -4510,9 +5284,14 @@
                         transformState.lineIndex = hit.lineIdx;
                         transformState.originalPoints = JSON.parse(JSON.stringify(regions[hit.regionIdx].lines[hit.lineIdx]));
                     } else if (displayMode === 'translation' || displayMode === 'comparison') {
-                        // “译文模式”下，点中任何地方都移动大框// --- 修改后：允许对比模式下也触发大框移动 ---
-                        transformState.action = 'move-region'; 
+                        // “译文模式”下，点中任何地方都移动大框
+                        transformState.action = 'move-region';
                         transformState.startBox = [...regions[hit.regionIdx].box];
+                        
+                        // 🌟【修复点 3】：如果当前选中的是大框且它是曲线文本框，必须暗中把它的曲线节点坐标全部记录下来
+                        if (regions[hit.regionIdx].isCurvePath) {
+                            transformState.startPathNodes = JSON.parse(JSON.stringify(regions[hit.regionIdx].pathNodes));
+                        }
                     } else {
                         // 其他情况（如原文模式点在大框空白处），禁止拖拽
                         transformState.dragging = false; 
@@ -4678,16 +5457,32 @@
                 }
                 // 2. 移动大框
                 // 在 onMouseMove 函数内部找到对应的 action 处理分支
+                // 2. 移动大框
                 else if (transformState.action === 'move-region') {
                     const origBox = transformState.startBox;
                     const dx = pos.x - transformState.startMouse.x;
                     const dy = pos.y - transformState.startMouse.y;
-
-                    // 这里正在直接修改内存中当前页的 regions 数据
+                    
+                    // 移动传统的包围盒
                     region.box = [
-                        origBox[0] + dx, origBox[1] + dy,
-                        origBox[2] + dx, origBox[3] + dy
+                        origBox[0] + dx,
+                        origBox[1] + dy,
+                        origBox[2] + dx,
+                        origBox[3] + dy
                     ];
+
+                    // 🌟【修复点 4】：当你在常规模式下用鼠标拖动整个文本框时，让所有的贝塞尔曲线锚点和手柄顺着位移 dx/dy 完美跟随平移！
+                    if (region.isCurvePath && transformState.startPathNodes) {
+                        region.pathNodes.forEach((node, idx) => {
+                            const startNode = transformState.startPathNodes[idx];
+                            node.x = startNode.x + dx;
+                            node.y = startNode.y + dy;
+                            node.cp1.x = startNode.cp1.x + dx;
+                            node.cp1.y = startNode.cp1.y + dy;
+                            node.cp2.x = startNode.cp2.x + dx;
+                            node.cp2.y = startNode.cp2.y + dy;
+                        });
+                    }
                 }
                 // 3. 增量旋转 (大框)
                 // 在 onMouseMove 中搜索 rotate 分支
@@ -5503,13 +6298,17 @@
 
                 // 内部闭包：顺着物理像素格子边缘精准勾勒 1px 线条的阶梯轮廓
                 function drawSteppedCirclePath(ox, oy, isSourceMode) {
-                    const tLeft = Math.floor(ox - r);
-                    const tTop = Math.floor(oy - r);
-                    const tRight = Math.ceil(ox + r);
-                    const tBottom = Math.ceil(oy + r);
+                    // 【核心新增】将圆心绝对对齐到当前像素格子的正中心，消灭亚像素漂移，确保移动时形状100%固定且完美轴对称
+                    const snapX = Math.floor(ox) + 0.5;
+                    const snapY = Math.floor(oy) + 0.5;
 
+                    const tLeft = Math.floor(snapX - r);
+                    const tTop = Math.floor(snapY - r);
+                    const tRight = Math.ceil(snapX + r);
+                    const tBottom = Math.ceil(snapY + r);
                     function inCircle(px, py) {
-                        return (Math.pow((px + 0.5) - ox, 2) + Math.pow((py + 0.5) - oy, 2)) <= r * r;
+                        // 使用稳定后的中心点进行圆方程判定
+                        return (Math.pow((px + 0.5) - snapX, 2) + Math.pow((py + 0.5) - snapY, 2)) <= r * r;
                     }
 
                     uiCtx.beginPath();
@@ -5587,8 +6386,11 @@
                     }
                     if (srcX !== null) {
                         drawSteppedCirclePath(srcX, srcY, true);
-                        const screenSrcX = srcX * viewState.scale + viewState.x;
-                        const screenSrcY = srcY * viewState.scale + viewState.y;
+                        // 【核心新增】让采样中心的红十字也咬合到相同的像素格点中心，与外圈保持绝对同步
+                        const snapSrcX = Math.floor(srcX) + 0.5;
+                        const snapSrcY = Math.floor(srcY) + 0.5;
+                        const screenSrcX = snapSrcX * viewState.scale + viewState.x;
+                        const screenSrcY = snapSrcY * viewState.scale + viewState.y;
                         uiCtx.save();
                         uiCtx.beginPath();
                         uiCtx.moveTo(screenSrcX - 6, screenSrcY); uiCtx.lineTo(screenSrcX + 6, screenSrcY);
@@ -5736,6 +6538,8 @@
         // --- SMART TCY ENGINE (Ultimate Edition) ---
         // 增加 targetCtx = ctx，确保不传参数时默认使用全局 ctx
         function drawSmartTranslation(region, onlyPass, targetCtx = ctx) {
+
+
             // --- [性能防弹衣：逻辑截断] ---
             const isGlow = onlyPass === 'glow';
             const isOuterStroke = onlyPass === 'outer-stroke';
@@ -5757,8 +6561,16 @@
 
             // 3. 【彻底补齐疏漏】外描边层智能拦截
             const isRegionOuterEnabled = (region.outerStrokeEnable !== undefined) ? region.outerStrokeEnable : activeOuterStrokeEnabled;
-            if (isOuterStroke && !isRegionOuterEnabled && !hasLocalOuter) return; 
+            if (isOuterStroke && !isRegionOuterEnabled && !hasLocalOuter) return;
             // ----------------------------
+
+
+
+
+
+
+
+
             // =========================================================================
             // 【核心新增：3D 透视拦截器阻断点】
             // =========================================================================
@@ -5771,16 +6583,20 @@
                     if (onlyPass === 'fill') {
                         targetCtx.save();
                         const isActive = (regions[activeRegionIndex] === region);
-                        targetCtx.strokeStyle = isActive ? '#a855f7' : '#6b21a8';
-                        targetCtx.lineWidth = 2 / viewState.scale;
-                        targetCtx.beginPath();
-                        region.points.forEach((p, pi) => pi === 0 ? targetCtx.moveTo(p.x, p.y) : targetCtx.lineTo(p.x, p.y));
-                        targetCtx.closePath();
-                        targetCtx.stroke();
-                        // 2. 如果是正在编辑的激活框，渲染高级控制手柄（4角方块 + 4边圆圈）
-                        if (isActive) {
-                            const handleSize = 8 / viewState.scale; // 顶点方块大小
-                            const radius = 4 / viewState.scale;     // 边的中心圆圈半径
+                            targetCtx.strokeStyle = isActive ? '#a855f7' : '#6b21a8';
+                            // 【熔断修补】限制 3D 辅助线的最细物理像素不低于 0.5 像素，最粗不超过 4 像素
+                            targetCtx.lineWidth = Math.max(1, Math.min(2, 2 / viewState.scale));
+                            
+                            targetCtx.beginPath();
+                            region.points.forEach((p, pi) => pi === 0 ? targetCtx.moveTo(p.x, p.y) : targetCtx.lineTo(p.x, p.y));
+                            targetCtx.closePath();
+                            targetCtx.stroke();
+                            
+                            // 2. 如果是正在编辑的激活框，渲染高级控制手柄
+                            if (isActive) {
+                                // 【熔断修补】确保在高倍缩放（放大或缩小）时，UI手柄方块和圆圈不会无限缩小
+                                const handleSize = Math.max(8, Math.min(24, 8 / viewState.scale)); 
+                                const radius = Math.max(4, Math.min(12, 4 / viewState.scale));
                             
                             // A. 先画 4 个顶点的紫色方块
                             targetCtx.fillStyle = '#a855f7';
@@ -6074,7 +6890,7 @@
                         else if (activeAutoTcy && !tok.style.noTcy) {
                             currentTcyGroup = null;
                             // 修改后的正则表达式：匹配 2-4 位数字，或者 2 个及以上的 ! ? (含全角半角)
-                            const regex = /([\d\uFF10-\uFF19]{1,4}|[!?\uff1f]{1,}|[！？\uff1f]{2,})/g; 
+                            const regex = /([\d\uFF10-\uFF19]{1,4}|[!?]{1,}|[！？]{1,})/g;  
                             let match, lastIndex = 0;
 
                             while ((match = regex.exec(tok.text)) !== null) {
@@ -6114,6 +6930,276 @@
                 }
                 return tokens;
             });
+
+// =========================================================================
+            // 🌟【深度融合完全体 - 完美修正版】自适应曲线排版分流器
+            // 彻底修复了由于变量名错写为 charItems 导致的渲染管道半路夭折隐形 Bug
+            // =========================================================================
+            if (region.isCurvePath && region.pathNodes && region.pathNodes.length >= 2) {
+                // 立刻执行 restore，完美抵消原版函数顶部自动加上的 translate/rotate
+                targetCtx.restore(); 
+
+                try {
+                    const lutObj = bakeCurveLUT(region.pathNodes);
+                    if (lutObj) {
+                        const fs = region.font_size || 20;
+                        
+                        // 开启干净的绝对空间坐标画笔
+                        targetCtx.save(); 
+                        const isVertical = region.direction === 'v'; 
+
+                        // 🎯 深度收割：直接抽取原版经过 TCY 组合后的高级 Token 流，并拍平成单线流
+                        const curveItems = [];
+                        processedLines.forEach(lineTokens => {
+                            if (!lineTokens) return;
+                            lineTokens.forEach(tok => {
+                                if (tok.isGroup) {
+                                    curveItems.push(tok); // TCY 数字/标点组作为一个整体单元载入曲线
+                                } else if (tok.text) {
+                                    for (let char of tok.text) {
+                                        curveItems.push({ char, isGroup: false, style: tok.style });
+                                    }
+                                }
+                            });
+                        });
+
+                        if (curveItems.length > 0) {
+                            const effectiveWeight = region.fontWeight || activeFontWeight;
+                            const letterSpacingMult = (region.letter_spacing !== undefined) ? region.letter_spacing : activeLetterSpacing;
+                            const letterSpacingPx = fs * letterSpacingMult;
+
+                            // 曲线物理步进长度预计算
+                            let totalTextWidth = 0;
+                            curveItems.forEach((item, idx) => {
+                                const style = item.style || {};
+                                const currentFontSize = style.absFontSize || (fs * (style.scale || 1.0));
+                                targetCtx.font = `${style.italic === true ? 'italic ' : ''}${style.bold ? 'bold ' : (effectiveWeight || '400')} ${currentFontSize}px ${style.font || region.fontFamily || activeFontFamily}`;
+                                
+                                const itemText = item.isGroup ? item.text : item.char;
+                                const charStepSize = isVertical ? currentFontSize : targetCtx.measureText(itemText).width;
+                                
+                                const preSpacing = (style.preKerning || 0) * currentFontSize;
+                                const spacing = letterSpacingPx + (style.kerning || 0) * currentFontSize;
+                                
+                                totalTextWidth += preSpacing + charStepSize + spacing;
+                                if (idx === curveItems.length - 1) totalTextWidth -= spacing;
+                            });
+
+                            let currentDistance = (lutObj.totalLength - totalTextWidth) / 2;
+
+                            // 多通道汉堡包渲染执行器
+                            const renderCurvePass = (passType) => {
+                                let distPointer = currentDistance;
+                                
+                                // 🌟【黄金修复点】：这里已完美修正为 curveItems，管道彻底畅通！
+                                curveItems.forEach(item => {
+                                    const style = item.style || {};
+                                    const currentFontSize = style.absFontSize || (fs * (style.scale || 1.0));
+                                    
+                                    const preSpacing = (style.preKerning || 0) * currentFontSize;
+                                    distPointer += preSpacing;
+
+                                    targetCtx.font = `${style.italic === true ? 'italic ' : ''}${style.bold ? 'bold ' : (effectiveWeight || '400')} ${currentFontSize}px ${style.font || region.fontFamily || activeFontFamily}`;
+                                    
+                                    const itemText = item.isGroup ? item.text : item.char;
+                                    const charStepSize = isVertical ? currentFontSize : targetCtx.measureText(itemText).width;
+                                    
+                                    let shouldDraw = false;
+                                    if (passType === 'glow') {
+                                        if (region.blurEnable || style.glowColor) shouldDraw = true;
+                                    } else if (passType === 'outer-stroke') {
+                                        const globalOuterEnabled = (region.outerStrokeEnable !== undefined) ? region.outerStrokeEnable : activeOuterStrokeEnabled;
+                                        if (globalOuterEnabled || style.outerStrokeColor) shouldDraw = true;
+                                    } else if (passType === 'stroke') {
+                                        const globalStrokeEnabled = (region.strokeEnable !== undefined) ? region.strokeEnable : activeStrokeEnabled;
+                                        if (globalStrokeEnabled || style.strokeColor) shouldDraw = true;
+                                    } else if (passType === 'fill') {
+                                        shouldDraw = true;
+                                    }
+
+                                    if (shouldDraw) {
+                                        targetCtx.save();
+                                        const centerDist = distPointer + charStepSize / 2;
+                                        const pt = getPointOnCurveAtDistance(lutObj, centerDist);
+
+                                        if (pt) {
+                                            // 基础吸附移动并旋转切线角
+                                            targetCtx.translate(pt.x + (style.offX || 0), pt.y + (style.offY || 0));
+                                            targetCtx.rotate(pt.angle);
+
+                                            // =========================================================================
+                                            // 🎯【分流轨 A】如果当前单元是 纵中横组(TCY) 且处于竖排切线流状态
+                                            // =========================================================================
+                                            if (item.isGroup && isVertical) {
+                                                targetCtx.rotate(-Math.PI / 2); // 竖排切线偏置
+
+                                                // 🌟🌟🌟【100% 完美复刻你原版的高精 actualBoundingBox 墨迹无损测算算法】
+                                                const flexGap = currentFontSize * 0.08;
+                                                const tcyChars = [];
+                                                let totalInkWidth = 0;
+
+                                                item.subTokens.forEach(sub => {
+                                                    const subFSize = currentFontSize * (sub.style.scale || 1.0);
+                                                    targetCtx.font = `${sub.style.italic === true ? 'italic ' : ''}${sub.style.bold ? 'bold ' : effectiveWeight} ${subFSize}px ${sub.style.font || region.fontFamily || activeFontFamily}`;
+                                                    
+                                                    for (let char of sub.text) {
+                                                        const m = targetCtx.measureText(char);
+                                                        // 核心：抓取纯图形墨迹真实的物理跨度，消灭固有槽宽留白干扰
+                                                        const inkW = m.actualBoundingBoxLeft + m.actualBoundingBoxRight;
+                                                        tcyChars.push({ 
+                                                            char: char, style: sub.style, fSize: subFSize, 
+                                                            inkW: inkW, lb: m.actualBoundingBoxLeft 
+                                                        });
+                                                        totalInkWidth += inkW;
+                                                    }
+                                                });
+
+                                                const totalBlockWidth = totalInkWidth + (tcyChars.length - 1) * flexGap;
+                                                const maxWidth = currentFontSize * 1.1;
+                                                // 如果总墨迹没有超出 1.1 倍字号，groupScaleX 稳稳等于 1.0，绝不发生误压缩！
+                                                let groupScaleX = (totalBlockWidth > maxWidth) ? (maxWidth / totalBlockWidth) : 1.0;
+
+                                                // 切换为左对齐基准，开始精准像素对齐拓印
+                                                targetCtx.textAlign = 'left';
+                                                targetCtx.textBaseline = 'middle';
+
+                                                let currentXCursor = Math.round(-(totalBlockWidth * groupScaleX) / 2);
+
+                                                tcyChars.forEach(m => {
+                                                    targetCtx.save();
+                                                    targetCtx.font = `${m.style.italic === true ? 'italic ' : ''}${m.style.bold ? 'bold ' : effectiveWeight} ${m.fSize}px ${m.style.font || region.fontFamily || activeFontFamily}`;
+                                                    
+                                                    const drawX = Math.round(currentXCursor + (m.lb * groupScaleX)) + (m.style.offX || 0);
+                                                    const drawY = Math.round(m.style.offY || 0);
+                                                    
+                                                    targetCtx.translate(drawX, drawY);
+                                                    targetCtx.scale(groupScaleX, 1.0);
+                                                    if (m.style.rotation) targetCtx.rotate(m.style.rotation * Math.PI / 180);
+
+                                                    // 多通道画笔分流烘焙
+                                                    if (passType === 'glow') {
+                                                        if (region.blurEnable || m.style.glowColor) {
+                                                            const blurRatio = m.style.glowColor ? (m.style.glowBlur / m.fSize) : (region.blurSizeRatio || 0.1);
+                                                            const blurPx = m.fSize * blurRatio;
+                                                            targetCtx.filter = `blur(${blurPx}px)`;
+                                                            targetCtx.strokeStyle = m.style.glowColor || region.blurColor || "#000000";
+                                                            targetCtx.lineWidth = m.fSize * 0.1 + (blurPx * 2);
+                                                            targetCtx.lineJoin = 'round'; targetCtx.lineCap = 'round';
+                                                            targetCtx.strokeText(m.char, 0, 0);
+                                                        }
+                                                    } else if (passType === 'outer-stroke') {
+                                                        const globalOuterEnabled = (region.outerStrokeEnable !== undefined) ? region.outerStrokeEnable : activeOuterStrokeEnabled;
+                                                        if (globalOuterEnabled || m.style.outerStrokeColor) {
+                                                            targetCtx.filter = 'none';
+                                                            targetCtx.lineJoin = 'round'; targetCtx.lineCap = 'round';
+                                                            targetCtx.strokeStyle = m.style.outerStrokeColor || region.outerStrokeColor || activeOuterStrokeColor;
+                                                            const maxW = m.style.outerStrokeColor ? (m.style.outerStrokeWidth * 2) : (m.fSize * (region.outerStrokeWidthRatio !== undefined ? region.outerStrokeWidthRatio : activeOuterStrokeWidth));
+                                                            targetCtx.lineWidth = maxW; targetCtx.strokeText(m.char, 0, 0);
+                                                        }
+                                                    } else if (passType === 'stroke') {
+                                                        const globalStrokeEnabled = (region.strokeEnable !== undefined) ? region.strokeEnable : activeStrokeEnabled;
+                                                        if (globalStrokeEnabled || m.style.strokeColor) {
+                                                            targetCtx.filter = 'none';
+                                                            targetCtx.lineJoin = 'round'; targetCtx.lineCap = 'round';
+                                                            targetCtx.strokeStyle = m.style.strokeColor || region.strokeColor || activeStrokeColor;
+                                                            const maxW = m.style.strokeColor ? m.style.strokeWidth : (m.fSize * ((region.strokeWidthRatio !== undefined) ? region.strokeWidthRatio : activeStrokeWidth));
+                                                            targetCtx.lineWidth = maxW; targetCtx.strokeText(m.char, 0, 0);
+                                                        }
+                                                    } else if (passType === 'fill') {
+                                                        targetCtx.filter = 'none';
+                                                        targetCtx.fillStyle = m.style.color || region.parsedColor || activeTextColor;
+                                                        targetCtx.fillText(m.char, 0, 0);
+                                                        if (String(effectiveWeight) === '400') targetCtx.fillText(m.char, 0, 0);
+                                                    }
+                                                    targetCtx.restore();
+                                                    currentXCursor += Math.round((m.inkW + flexGap) * groupScaleX);
+                                                });
+
+                                            } else {
+                                                // =========================================================================
+                                                // 🎯【分流轨 B】普通单字排版分支（完美联动合并常量规则与特效判定）
+                                                // =========================================================================
+                                                if (isVertical) {
+                                                    targetCtx.rotate(-Math.PI / 2); // 竖排切线偏置
+                                                    
+                                                    const needsRotateBack = CHARS_TO_ROTATE.includes(itemText) || /[…—_～\-\~“”‘’]/.test(itemText);
+                                                    if (needsRotateBack) {
+                                                        targetCtx.rotate(Math.PI / 2);
+                                                    }
+                                                    else if (CHARS_UPRIGHT_CENTER.includes(itemText) || CHARS_PUNCTUATION_TOP_RIGHT.includes(itemText) || /[?!!;]/.test(itemText)) {
+                                                        targetCtx.translate(-currentFontSize * 0.02, currentFontSize * 0.05);
+                                                    }
+                                                }
+
+                                                // 富文本矩阵全数继承
+                                                if (style.rotation) targetCtx.rotate(style.rotation * Math.PI / 180);
+                                                if (typeof style.italic === 'number' && style.italic !== 0) {
+                                                    targetCtx.transform(1, 0, Math.tan(style.italic * Math.PI / 180) * -1, 1, 0, 0);
+                                                }
+                                                if (style.vShear) targetCtx.transform(1, Math.tan(style.vShear * Math.PI / 180) * -1, 0, 1, 0, 0);
+                                                if (style.mirror) targetCtx.scale(-1, 1);
+                                                if (style.mirrorV) targetCtx.scale(1, -1);
+
+                                                targetCtx.textAlign = 'center';
+                                                targetCtx.textBaseline = 'middle';
+
+                                                if (passType === 'glow') {
+                                                    const blurRatio = style.glowColor ? (style.glowBlur / currentFontSize) : (region.blurSizeRatio || 0.1);
+                                                    const blurPx = currentFontSize * blurRatio;
+                                                    targetCtx.filter = `blur(${blurPx}px)`;
+                                                    targetCtx.strokeStyle = style.glowColor || region.blurColor || "#000000";
+                                                    targetCtx.lineWidth = currentFontSize * 0.1 + (blurPx * 2);
+                                                    targetCtx.lineJoin = 'round'; targetCtx.lineCap = 'round';
+                                                    targetCtx.strokeText(itemText, 0, 0);
+                                                } 
+                                                else if (passType === 'outer-stroke') {
+                                                    targetCtx.filter = 'none';
+                                                    targetCtx.lineJoin = 'round'; targetCtx.lineCap = 'round';
+                                                    targetCtx.strokeStyle = style.outerStrokeColor || region.outerStrokeColor || activeOuterStrokeColor;
+                                                    const maxW = style.outerStrokeColor ? (style.outerStrokeWidth * 2) : (currentFontSize * (region.outerStrokeWidthRatio !== undefined ? region.outerStrokeWidthRatio : activeOuterStrokeWidth));
+                                                    targetCtx.lineWidth = maxW; targetCtx.strokeText(itemText, 0, 0);
+                                                } 
+                                                else if (passType === 'stroke') {
+                                                    targetCtx.filter = 'none';
+                                                    targetCtx.lineJoin = 'round'; targetCtx.lineCap = 'round';
+                                                    targetCtx.strokeStyle = style.strokeColor || region.strokeColor || activeStrokeColor;
+                                                    const maxW = style.strokeColor ? style.strokeWidth : (currentFontSize * ((region.strokeWidthRatio !== undefined) ? region.strokeWidthRatio : activeStrokeWidth));
+                                                    targetCtx.lineWidth = maxW; targetCtx.strokeText(itemText, 0, 0);
+                                                } 
+                                                else if (passType === 'fill') {
+                                                    targetCtx.filter = 'none';
+                                                    targetCtx.fillStyle = style.color || region.parsedColor || activeTextColor;
+                                                    targetCtx.fillText(itemText, 0, 0);
+                                                    if (String(effectiveWeight) === '400') targetCtx.fillText(itemText, 0, 0); 
+                                                }
+                                            }
+                                        }
+                                        targetCtx.restore();
+                                    }
+
+                                    const spacing = letterSpacingPx + (style.kerning || 0) * currentFontSize;
+                                    distPointer += charStepSize + spacing;
+                                });
+                            };
+
+                            if (!onlyPass) {
+                                renderCurvePass('glow'); renderCurvePass('outer-stroke'); renderCurvePass('stroke'); renderCurvePass('fill');
+                            } else {
+                                renderCurvePass(onlyPass);
+                            }
+                        }
+                        targetCtx.restore();
+                    }
+
+                    // 呈现贝塞尔交互手柄 UI
+                    if (isPenMode && region === regions[activeRegionIndex] && (!onlyPass || onlyPass === 'fill')) {
+                        if (typeof renderCurvePathUI === 'function') renderCurvePathUI(region, targetCtx);
+                    }
+                } catch (err) {
+                    console.error("融合型曲线管道发生内部异常:", err);
+                }
+                return; // 💥 成功接管，阻断后续传统的矩形排版
+            }
 
             // === [新增] 动态布局计算 (Dynamic Layout Engine) ===
             // 扫描每一行，判断是否需要因为 Ruby 或 着重号 而撑开间距
@@ -6404,7 +7490,8 @@
                             visualFullH: h + firstAlignDist + lastAlignDist // 实际占用的总高度
                         };
                     });
-                                        
+                    
+
                     // ... (后面是 processedLines.forEach 绘制循环) ...
 
                     processedLines.forEach((tokens, i) => {
@@ -7103,7 +8190,7 @@
                     // --- 1. 竖排逻辑 ---
                     const segments = [];
                     if (tcyEnabled) {
-                        const regex = /([\d\uFF10-\uFF19]{2,4})/g;
+                        const regex = /([\d\uFF10-\uFF19]{1,4}|[!?]{1,}|[！？]{1,})/g; 
                         let match, lastIdx = 0;
                         while ((match = regex.exec(text)) !== null) {
                             if (match.index > lastIdx) segments.push({ text: text.substring(lastIdx, match.index), tcy: false });
@@ -7520,10 +8607,23 @@ ctx.translate(0, Math.round(charY));
                                     initRegionBox(r); 
                                 }
 
-                                if (r.translation) {
-                                    // 强制将 [BR]、<br> 统一替换为标准 【BR】（不区分大小写）
-                                    r.translation = r.translation.replace(/\[BR\]|【BR】|<br>/gi, '【BR】');
-                                    r.translation = cleanTranslationText(r.translation);
+                                // 【新增】优先获取 translation_raw，如果没有再保留原本的 translation
+                                // 优先获取 translation_raw，如果没有再保留原本的 translation
+                                if (r.translation_raw !== undefined && r.translation_raw !== null) {
+                                    r.translation = r.translation_raw;
+                                }
+
+                                if (r.translation) { 
+                                    // 1. 先将可能存在的特殊换行符统一规范化
+                                    r.translation = r.translation.replace(/\[BR\]|<br>/gi, '【BR】');
+                                    
+                                    // 2. 【核心新增】导入时自动静默执行系统固定规则
+                                    if (typeof applyRulesToTranslation === 'function' && typeof SYSTEM_FIXED_RULES !== 'undefined') {
+                                        r.translation = applyRulesToTranslation(r.translation, SYSTEM_FIXED_RULES);
+                                    } else {
+                                        // 如果函数还没加载完的兜底原逻辑
+                                        r.translation = cleanTranslationText(r.translation);
+                                    }
                                 }
                             });
                         } catch (err) {
@@ -8730,10 +9830,34 @@ ctx.translate(0, Math.round(charY));
                     draw();
                 }
             }
-            if (e.key === 'Delete') {
-                // 只有在没在文本框打字时才触发
-                if (document.activeElement !== transEditArea && document.activeElement !== origEditArea) {
-                    deleteActiveLine();
+            // 在你的 window.addEventListener('keydown') 内部追加：
+            if ((e.key === 'Delete' || e.key === 'Backspace') && isPenMode) {
+                // 确保当前没有在输入框或文本域内打字，防止误删
+                if (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT') return;
+
+                if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
+                    const r = regions[activeRegionIndex];
+                    
+                    // 确保是曲线模式，并且确实选中的某个有效的锚点
+                    if (r.isCurvePath && activePenNodeIdx !== -1 && r.pathNodes) {
+                        // 安全限制：一条曲线至少保留2个点，否则无法构成线段
+                        if (r.pathNodes.length > 2) {
+                            r.pathNodes.splice(activePenNodeIdx, 1); // 核心：从数组中剔除该节点
+                            
+                            // 修正删除后的高亮索引，防止越界
+                            activePenNodeIdx = Math.min(activePenNodeIdx, r.pathNodes.length - 1);
+                            
+                            // 重新计算包围大框、提交历史记录快照并重绘
+                            if (typeof calculateBoxFromCurve === 'function') calculateBoxFromCurve(r);
+                            if (typeof persistCanvasData === 'function') persistCanvasData(); 
+                            isCanvasDirty = true;
+                            draw();
+                        } else {
+                            // 如果只剩2个点还想删，可以提示用户或者直接删掉整个文本图层
+                            alert("贝塞尔辅助曲线至少需要保留 2 个锚点！\n如需完全清除，请在常规模式下使用『删除译文框』按钮。");
+                        }
+                        e.preventDefault();
+                    }
                 }
             }
         });
@@ -9206,6 +10330,7 @@ ctx.translate(0, Math.round(charY));
                 matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
             }
             // --- 修改开始：处理导出键名后缀 ---
+            // --- 修改开始：处理导出键名后缀与译文路由 ---
             const exportedRegions = regions.map(r => {
                 const newR = { ...r };
                 // 将内存值转存到带后缀的键名中
@@ -9214,8 +10339,18 @@ ctx.translate(0, Math.round(charY));
                 // 删除不带后缀的原始键名（可选，为了保持 JSON 纯净）
                 delete newR.line_spacing;
                 delete newR.letter_spacing;
+
+                // 【核心新增】判断原 JSON 结构中是否存在 translation_raw
+                if (newR.translation_raw !== undefined && newR.translation_raw !== null) {
+                    // 如果存在，把当前编辑器的最新文本赋给 translation_raw
+                    newR.translation_raw = newR.translation;
+                    // 必须删除临时的 translation 键，防止字段污染
+                    delete newR.translation;
+                }
+                
                 return newR;
             });
+            // --- 修改结束 ---
             // --- 修改结束 ---
 
             const exportData = {
@@ -9256,16 +10391,27 @@ ctx.translate(0, Math.round(charY));
             const zip = new JSZip();
             
             // 遍历内存中的所有文件数据
+            // 遍历内存中的所有文件数据
             matchedFiles.forEach(item => {
-                // --- 修改开始：批量转换后缀 ---
+                // --- 修改开始：批量转换后缀与译文路由 ---
                 const exportedRegions = item.regions.map(r => {
                     const newR = { ...r };
                     newR.line_spacing_mtu = r.line_spacing;
                     newR.letter_spacing_mtu = r.letter_spacing;
                     delete newR.line_spacing;
                     delete newR.letter_spacing;
+
+                    // 【核心新增】判断原 JSON 结构中是否存在 translation_raw
+                    if (newR.translation_raw !== undefined && newR.translation_raw !== null) {
+                        // 如果存在，把当前编辑器的最新文本赋给 translation_raw
+                        newR.translation_raw = newR.translation;
+                        // 必须删除临时的 translation 键，防止字段污染
+                        delete newR.translation;
+                    }
+
                     return newR;
                 });
+                // --- 修改结束 ---
                 // --- 修改结束 ---
 
                 const fileContent = {
