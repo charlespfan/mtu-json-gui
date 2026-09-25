@@ -4,10 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MTU 嵌字编辑器 (v20.2.1)</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/streamsaver@2.0.6/StreamSaver.js"></script>
+    <script src="./libs/tailwind.js"></script>
+    <script src="./libs/jszip.min.js"></script>
+    <script src="./libs/client-zip/worker.js"></script>
+    <script src="./libs/streamsaver/StreamSaver.js"></script>
+    <script src="./libs/opencc/t2cn.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', 'Noto Sans SC', sans-serif; background-color: #111827; color: #e5e7eb; height: 100vh; overflow: hidden; }
@@ -588,9 +589,23 @@
                 </div>
                 
                 <div class="flex flex-wrap justify-between items-center flex-none gap-2">
-                    <button id="btnResetSidebar" class="px-2 py-1.5 rounded bg-transparent text-red-400 hover:bg-red-900/40 border border-red-800 transition-colors text-[13px] font-bold active:scale-95">
-                        ↺ 重置
-                    </button>
+                    <div class="flex gap-1">
+                        <button id="btnResetSidebar" class="px-2 py-1.5 rounded bg-transparent text-red-400 hover:bg-red-900/40 border border-red-800 transition-colors text-[13px] font-bold active:scale-95">
+                            ↺ 重置
+                        </button>
+                        <!-- 【原有】单框繁转简 -->
+                        <button onclick="convertOriginalToSimplified()" 
+                                class="px-2 py-1.5 rounded bg-gray-700 hover:bg-amber-600 text-amber-300 border border-amber-500/30 transition-colors text-[13px] font-bold active:scale-95" 
+                                title="繁转简：将当前选中框原文的繁体中文转换为简体，输出到译文栏（完整保留原有换行）">
+                            繁→简
+                        </button>
+                        <!-- 【新增】全书繁转简 -->
+                        <button onclick="convertAllOriginalToSimplified()" 
+                                class="px-2 py-1.5 rounded bg-gray-700 hover:bg-rose-600 text-rose-300 border border-rose-500/30 transition-colors text-[13px] font-bold active:scale-95" 
+                                title="全书繁转简：将所有页原文栏的繁体中文批量转换为简体，写入对应译文栏（完整保留原有换行）">
+                            全书繁→简
+                        </button>
+                    </div>
                     
                     <div class="flex gap-1">
                         <button onclick="recalibrateMode('slanted')" class="px-3 py-1.5 rounded bg-gray-700 hover:bg-purple-600 text-purple-300 border border-purple-500/30 transition-colors text-[13px] font-bold active:scale-95" title="斜：智能分析文字倾斜度并自动对齐外壳">
@@ -600,11 +615,6 @@
                             直
                         </button>
                     </div>
-                    <!--
-                    <button id="btnSaveSidebar" class="flex-grow px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold shadow-lg active:scale-95">
-                        提示：shift+左键单击 可多选多个行框
-                    </button>
-                    -->
                 </div>
             </div>
 
@@ -834,6 +844,15 @@
     </div>
 
     <script>
+        // 【新增】告诉 StreamSaver 使用本地的 mitm.html
+        if (typeof streamSaver !== 'undefined') {
+            streamSaver.mitm = './libs/streamsaver/mitm.html';
+        }
+        // 【新增】client-zip worker 本地路径兜底
+        if (typeof downloadZip !== 'undefined' && downloadZip.WORKER_URL === undefined) {
+            try { downloadZip.WORKER_URL = './libs/client-zip/worker.js'; } catch(e) {}
+        }
+        
         // --- 1. 状态变量 ---
         let showBlocks = true;
         let showLines = true;
@@ -1122,6 +1141,194 @@
         const paintOpacityRange = document.getElementById('paintOpacityRange');
         const paintOpacityValue = document.getElementById('paintOpacityValue');
         const penModeBtnRight = document.getElementById('penModeBtnRight');
+
+
+        // =========================================================================
+        // 【修复版】繁转简功能：基于 js-opencc，兼容 file:// 本地环境
+        // 特性：保留原有换行结构、惰性初始化、覆盖前二次确认
+        // =========================================================================
+
+        /**
+        * 惰性获取繁→简转换器（首次调用时初始化并缓存）
+        */
+        function getTw2CnConverter() {
+            if (typeof OpenCC === 'undefined') return null;
+            if (!window._mtuTw2CnConverter) {
+                try {
+                    // js-opencc 的 API：from 'tw'，to 'cn'
+                    window._mtuTw2CnConverter = OpenCC.Converter({ from: 'tw', to: 'cn' });
+                } catch (err) {
+                    console.error("js-opencc 转换器初始化失败:", err);
+                    return null;
+                }
+            }
+            return window._mtuTw2CnConverter;
+        }
+
+        /**
+        * 将当前选中框的原文栏内容（繁体）转换为简体，写入译文栏
+        */
+        function convertOriginalToSimplified() {
+            // 1. 前置校验：必须选中一个文本区域
+            if (activeRegionIndex === -1 || !regions[activeRegionIndex]) {
+                alert("请先点击选中一个文本区域，然后再执行繁转简。");
+                return;
+            }
+
+            // 2. 前置校验：转换库是否加载完成
+            const converter = getTw2CnConverter();
+            if (!converter) {
+                alert("繁简转换库尚未加载完成。\n请检查网络连接后刷新页面重试。");
+                return;
+            }
+
+            const r = regions[activeRegionIndex];
+            const origArea  = document.getElementById('origEditArea');
+            const transArea = document.getElementById('transEditArea');
+
+            // 3. 抓取原文内容
+            let sourceText = (origArea && origArea.value)
+                ? origArea.value
+                : (r.texts || []).join('\n');
+
+            if (!sourceText || !sourceText.trim()) {
+                alert("原文栏为空，没有可转换的内容。");
+                return;
+            }
+
+            // 4. 译文栏已有内容时二次确认
+            if (transArea && transArea.value && transArea.value.trim()) {
+                if (!confirm("译文栏已有内容，确定要用繁转简的结果覆盖吗？")) return;
+            }
+
+            // =====================================================================
+            // 5. 【核心】保留原有换行：按行分割 → 逐行转换 → 用 \n 重新拼接
+            // =====================================================================
+            const lines = sourceText.split('\n');
+            const simplifiedLines = lines.map(line => converter(line));
+            const simplifiedText  = simplifiedLines.join('\n');
+
+            // 6. 写入译文栏（视觉层）
+            if (transArea) transArea.value = simplifiedText;
+
+            // 7. 同步数据模型（内部用 【BR】 存储换行）
+            r.translation = simplifiedText.replace(/\n/g, '【BR】');
+
+            // 8. 触发画布重绘
+            draw();
+
+            // 9. 视觉反馈
+            if (transArea) {
+                transArea.style.borderColor = '#f59e0b';
+                setTimeout(() => { transArea.style.borderColor = '#4b5563'; }, 600);
+            }
+
+            console.log(`繁转简完成：#${activeRegionIndex + 1} 共 ${lines.length} 行`);
+        }
+
+        // 暴露到 window，供 HTML 内联 onclick 调用
+        window.convertOriginalToSimplified = convertOriginalToSimplified;
+
+        // =========================================================================
+        // 【新增】全局繁转简：一键处理所有页面的原文 → 译文
+        // 特性：
+        //   - 逐行转换，完整保留换行结构（原文 N 行 → 译文 N 行，用【BR】分隔）
+        //   - 自动判断单文件/批量模式
+        //   - 批量模式下先落盘当前页修改，避免丢失
+        //   - 跳过原文为空的文本框，防止误覆盖
+        // =========================================================================
+
+        async function convertAllOriginalToSimplified() {
+            // 1. 前置校验：转换库是否就绪
+            const converter = getTw2CnConverter();
+            if (!converter) {
+                alert("繁简转换库尚未加载完成。\n请检查网络连接后刷新页面重试。");
+                return;
+            }
+
+            const isBatchMode = (typeof matchedFiles !== 'undefined' && matchedFiles.length > 0);
+
+            // =====================================================================
+            // 模式 A：批量模式（已加载项目文件夹）
+            // =====================================================================
+            if (isBatchMode) {
+                if (!confirm(`确定要对全书 ${matchedFiles.length} 页执行繁转简吗？\n\n⚠ 会用原文栏的简体转换结果覆盖译文栏！\n（原文为空的框会被自动跳过）`)) {
+                    return;
+                }
+
+                // 【关键】先把当前页内存中未落盘的修改同步回 matchedFiles，避免被后续批量覆盖
+                if (currentFileIndex !== -1 && matchedFiles[currentFileIndex]) {
+                    matchedFiles[currentFileIndex].regions = JSON.parse(JSON.stringify(regions));
+                }
+
+                let convertedRegions = 0;   // 成功转换的文本框总数
+                let convertedPages   = 0;   // 有内容被修改的页面总数
+
+                matchedFiles.forEach(file => {
+                    let pageChanged = false;
+                    (file.regions || []).forEach(r => {
+                        // 跳过没有原文的框，防止清空已有译文
+                        if (!Array.isArray(r.texts) || r.texts.length === 0) return;
+                        // 全部行都是空白的，也跳过
+                        if (!r.texts.some(t => t && t.trim())) return;
+
+                        // 【核心】逐行转换，完整保留换行结构
+                        const simplifiedLines = r.texts.map(t => converter(t || ''));
+                        r.translation = simplifiedLines.join('【BR】');
+
+                        convertedRegions++;
+                        pageChanged = true;
+                    });
+                    if (pageChanged) convertedPages++;
+                });
+
+                // 重新加载当前页，让 UI 和画布同步刷新
+                await loadFile(currentFileIndex);
+
+                alert(`✅ 全书繁转简完成！\n\n共处理 ${convertedPages} 页，${convertedRegions} 个文本框。`);
+            }
+            // =====================================================================
+            // 模式 B：单文件模式（仅打开了一个 JSON）
+            // =====================================================================
+            else {
+                if (!regions || regions.length === 0) {
+                    alert("当前没有可转换的区域。");
+                    return;
+                }
+                if (!confirm(`确定要对当前页 ${regions.length} 个区域执行繁转简吗？\n（原文为空的框会被自动跳过）`)) {
+                    return;
+                }
+
+                let convertedRegions = 0;
+
+                regions.forEach(r => {
+                    if (!Array.isArray(r.texts) || r.texts.length === 0) return;
+                    if (!r.texts.some(t => t && t.trim())) return;
+
+                    // 【核心】逐行转换，完整保留换行结构
+                    const simplifiedLines = r.texts.map(t => converter(t || ''));
+                    r.translation = simplifiedLines.join('【BR】');
+                    convertedRegions++;
+                });
+
+                // 若当前有选中框，同步刷新译文编辑框的显示
+                if (activeRegionIndex !== -1 && regions[activeRegionIndex]) {
+                    const r = regions[activeRegionIndex];
+                    document.getElementById('transEditArea').value =
+                        (r.translation || '').replace(/【BR】/g, '\n');
+                }
+
+                // 重绘画布
+                draw();
+
+                alert(`✅ 当前页繁转简完成！\n\n共处理 ${convertedRegions} 个文本框。`);
+            }
+        }
+
+        // 暴露到 window，供 HTML 内联 onclick 调用
+        window.convertAllOriginalToSimplified = convertAllOriginalToSimplified;
+
+
 
 
 
