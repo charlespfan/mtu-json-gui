@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTU 嵌字编辑器 (v20.2.1)</title>
+    <title>MTU 嵌字编辑器 (v20.2.3)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/client-zip@2.3.0/worker.js"></script>
@@ -196,6 +196,17 @@
                         title="建议：无显卡设为1-2，有显卡设为4+">
                     <span id="concurrencyWarn" class="text-[10px] text-green-500" title="内存状态预估">●</span>
                 </div>
+            </div>
+            <div class="flex flex-col items-center bg-gray-900/50 px-2 py-1 rounded border border-gray-700 ml-2">
+                <span class="text-[9px] text-gray-400 uppercase font-bold">导出格式</span>
+                <select id="exportFormatSelect" 
+                        class="bg-gray-800 border border-gray-600 rounded text-center text-xs text-white h-5 outline-none focus:border-orange-500 px-1 mt-0.5"
+                        title="默认跟随原图格式；也可以强制统一转成 JPG / WebP / PNG">
+                    <option value="auto" selected>原图格式</option>
+                    <option value="jpg">强制 JPG</option>
+                    <option value="webp">强制 WebP</option>
+                    <option value="png">强制 PNG</option>
+                </select>
             </div>
             <div class="flex flex-col gap-1">
                 <button onclick="exportCurrentJson()" class="px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white text-xs rounded">导出当前JSON</button>
@@ -971,7 +982,54 @@
         // 在原有的变量下方追加：
         let activePenNodeIdx = -1; // 🌟 [新增] 当前持久选中的锚点索引（按下 Delete 键时会删除它）
 
-
+        // --- [新增] 全局导出格式控制 ---
+        let globalExportFormat = 'auto'; // 默认跟随原图格式
+        let globalExportQuality = 1.0;  // JPG/WebP 质量（1.0 最高）
+        
+        /**
+         * 获取当前导出规格
+         * @param {string} [sourceName] - 原图文件名（用于 auto 模式判定）
+         * @returns {{mime: string, ext: string, quality: (number|undefined), needsWhiteBG: boolean}}
+         */
+        function getExportSpec(sourceName) {
+            let fmt = globalExportFormat;
+        
+            // 🌟 auto 模式：从原图扩展名推导格式
+            if (fmt === 'auto') {
+                if (sourceName && typeof sourceName === 'string') {
+                    const ext = sourceName.split('.').pop().toLowerCase();
+                    if (ext === 'webp') fmt = 'webp';
+                    else if (ext === 'png') fmt = 'png';
+                    else if (ext === 'jpg' || ext === 'jpeg') fmt = 'jpg';
+                    else fmt = 'png'; // 其他未知格式默认回落到 PNG 无损
+                } else {
+                    fmt = 'png'; // 没给原图名时兜底为 PNG
+                }
+            }
+        
+            switch (fmt) {
+                case 'webp':
+                    return { mime: 'image/webp', ext: 'webp', quality: globalExportQuality, needsWhiteBG: true };
+                case 'png':
+                    return { mime: 'image/png', ext: 'png', quality: undefined, needsWhiteBG: false };
+                case 'jpg':
+                case 'jpeg':
+                default:
+                    return { mime: 'image/jpeg', ext: 'jpg', quality: globalExportQuality, needsWhiteBG: true };
+            }
+        }
+        
+        // 绑定下拉框（脚本在页面末尾，直接绑定即可）
+        (function bindExportFormatSelect(){
+            const sel = document.getElementById('exportFormatSelect');
+            if (sel) {
+                globalExportFormat = sel.value;
+                sel.addEventListener('change', (e) => {
+                    globalExportFormat = e.target.value;
+                    console.log(`[Export] 导出格式已切换为: ${globalExportFormat === 'auto' ? '原图格式（跟随源文件）' : globalExportFormat.toUpperCase()}`);
+                });
+            }
+        })();
 
 
         // --- 在脚本顶部的变量定义区 ---
@@ -2851,30 +2909,71 @@
         }
 
         // 辅助：更新全局默认变量 (根据你的代码变量名)
+
         function updateGlobalDefault(prop, val) {
-            if (prop === 'font_size') {} // 字号通常不设全局默认
+            if (prop === 'font_size') {}
             else if (prop === 'fontFamily') activeFontFamily = val;
             else if (prop === 'fontWeight') activeFontWeight = val;
             else if (prop === 'line_spacing') activeLineSpacing = val;
             else if (prop === 'letter_spacing') activeLetterSpacing = val;
             else if (prop === 'parsedColor') activeTextColor = val;
-
-            // --- 补全以下缺失的全局映射 ---
-            else if (prop === 'strokeWidthRatio') activeStrokeWidth = val; // 对应描边粗细
-            else if (prop === 'strokeColor') activeStrokeColor = val;     // 对应描边颜色
-            else if (prop === 'strokeEnable') activeStrokeEnabled = val;   // 对应描边开关
-
+        
+            else if (prop === 'strokeWidthRatio') activeStrokeWidth = val;
+            else if (prop === 'strokeColor') activeStrokeColor = val;
+            else if (prop === 'strokeEnable') activeStrokeEnabled = val;
+        
             else if (prop === 'outerStrokeWidthRatio') activeOuterStrokeWidth = val;
             else if (prop === 'outerStrokeColor') activeOuterStrokeColor = val;
             else if (prop === 'outerStrokeEnable') activeOuterStrokeEnabled = val;
-            // --- 新增：如果是间距或颜色等全局属性，且当前未选中任何框时，同步更新所有现有框 ---
-            if (activeRegionIndex === -1 && selectedRegions.length === 0) {
+        
+            // === 行间距、字间距：真正全书全局应用 ===
+            if (prop === 'line_spacing' || prop === 'letter_spacing') {
+        
+                if (typeof matchedFiles !== 'undefined' &&
+                    matchedFiles.length > 0) {
+        
+                    // 1. 先保存当前页面最新修改
+                    if (matchedFiles[currentFileIndex]) {
+                        matchedFiles[currentFileIndex].regions =
+                            JSON.parse(JSON.stringify(regions));
+                    }
+        
+                    // 2. 遍历全书所有页面
+                    matchedFiles.forEach(fileItem => {
+                        if (!Array.isArray(fileItem.regions)) return;
+        
+                        fileItem.regions.forEach(r => {
+                            r[prop] = val;
+                        });
+                    });
+        
+                    // 3. 同步当前页面数据
+                    if (matchedFiles[currentFileIndex]) {
+                        regions = JSON.parse(JSON.stringify(
+                            matchedFiles[currentFileIndex].regions
+                        ));
+                    }
+        
+                } else {
+                    // 单页模式：仅修改当前页面
+                    regions.forEach(r => {
+                        r[prop] = val;
+                    });
+                }
+        
+                return;
+            }
+        
+            // 其他属性保持原来的行为
+            if (activeRegionIndex === -1 &&
+                selectedRegions.length === 0) {
+        
                 regions.forEach(r => {
-                    // 如果框内还没有该属性，或者你想强制全局同步
-                    r[prop] = val; 
+                    r[prop] = val;
                 });
             }
         }
+
 
 
         concurrencyInput.addEventListener('input', (e) => {
@@ -8313,6 +8412,8 @@ ctx.translate(0, Math.round(charY));
                 } else {
                     currentImage = img;
                     currentFileName = file.name.split('.')[0];
+                    // 🌟 记录原图完整文件名，供导出时判定格式
+                    window.__currentSourceImageName = file.name;
                 }
                 resizeCanvas();
                 draw();
@@ -8896,6 +8997,8 @@ ctx.translate(0, Math.round(charY));
                 const CanvasClass = window.OffscreenCanvas || HTMLCanvasElement;
                 let offCanvas;
                 
+                const spec = getExportSpec(item.image.name); // 🌟 传原图名以支持 auto 模式
+                
                 if (window.OffscreenCanvas) {
                     offCanvas = new OffscreenCanvas(currentImage.width, currentImage.height);
                 } else {
@@ -8910,6 +9013,13 @@ ctx.translate(0, Math.round(charY));
                 const img = await loadImage(URL.createObjectURL(item.image));
                 offCanvas.width = img.width;
                 offCanvas.height = img.height;
+                
+                // 🌟 [新增] 非 PNG 格式先铺一层白底，防止 JPG 出现黑块/灰块
+                if (spec.needsWhiteBG) {
+                    offCtx.fillStyle = '#ffffff';
+                    offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+                }
+                
                 offCtx.drawImage(img, 0, 0);
                 URL.revokeObjectURL(img.src);
 
@@ -8950,15 +9060,13 @@ ctx.translate(0, Math.round(charY));
                 item.regions.forEach(r => drawSmartTranslation(r, null, offCtx));
 
 
-                // E. 导出 Blob
-
-
+                // E. 导出 Blob（按用户选择的格式）
                 const blob = await (offCanvas.convertToBlob ? 
-                    offCanvas.convertToBlob({ type: 'image/png' }) : 
-                    new Promise(r => offCanvas.toBlob(r, 'image/png')));
+                    offCanvas.convertToBlob({ type: spec.mime, quality: spec.quality }) : 
+                    new Promise(r => offCanvas.toBlob(r, spec.mime, spec.quality)));
                 
                 return {
-                    name: `${item.image.name.split('.')[0]}_translated.png`,
+                    name: `${item.image.name.split('.')[0]}_translated.${spec.ext}`,
                     lastModified: new Date(),
                     input: blob
                 };
@@ -9082,14 +9190,21 @@ ctx.translate(0, Math.round(charY));
 
                 // --- 定义单个文件的“渲染+写入”任务 ---
                 const processAndWriteTask = async (item) => {
+                    const spec = getExportSpec(item.image.name); // 🌟 传原图名以支持 auto 模式
                     // A. 渲染逻辑 (直接复用你之前的渲染流程)
                     const offCanvas = new OffscreenCanvas(currentImage.width, currentImage.height);
                     const offCtx = offCanvas.getContext('2d');
-
                     // 加载原图
                     const img = await loadImage(URL.createObjectURL(item.image));
                     offCanvas.width = img.width;
                     offCanvas.height = img.height;
+                
+                    // 🌟 [新增] 非 PNG 格式先铺白底
+                    if (spec.needsWhiteBG) {
+                        offCtx.fillStyle = '#ffffff';
+                        offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+                    }
+                
                     offCtx.drawImage(img, 0, 0);
                     URL.revokeObjectURL(img.src);
 
@@ -9129,11 +9244,12 @@ ctx.translate(0, Math.round(charY));
                     // 【关键修改】直接把 offCtx 传进去，不再修改全局变量
                     item.regions.forEach(r => drawSmartTranslation(r, null, offCtx));
 
-                    // B. 写入磁盘逻辑
-                    const fileName = `${item.image.name.split('.')[0]}_translated.png`;
-                    const blob = await offCanvas.convertToBlob({ type: 'image/png' });
+                    // B. 写入磁盘逻辑（按用户选择的格式）
+                    const fileName = `${item.image.name.split('.')[0]}_translated.${spec.ext}`;
+                    const blob = await offCanvas.convertToBlob({ type: spec.mime, quality: spec.quality });
                     
-                    const fileHandle = await dirHandle.getFileHandle(fileName, { create: true });
+                    const fileHandle = await dirHandle.getFileHandle(fileName, { create: true }); 
+                                       
                     const writable = await fileHandle.createWritable();
                     await writable.write(blob);
                     await writable.close();
@@ -9179,11 +9295,26 @@ ctx.translate(0, Math.round(charY));
 
         // 后台重建版单图导出（不依赖主画布状态，天生干净）
         // 后台重建版单图导出（修复蒙版叠加逻辑）
+        // 后台重建版单图导出（支持 JPG / WebP / PNG，自动白底兜底）
         async function exportCurrentSingleImage() {
             if (!currentImage) return alert("无图片");
             syncMaskData();
             const btn = document.getElementById('btnExportSingle');
             const originalText = btn.innerText;
+            // 🌟 优先从 currentImage.src 里提取真实扩展名；失败时用全局 currentFileName
+            let sourceNameForSpec = currentFileName || 'image.png';
+            if (currentImage && currentImage.src && !currentImage.src.startsWith('blob:')) {
+                sourceNameForSpec = currentImage.src.split('/').pop().split('?')[0];
+            }
+            // 若 currentFileName 本身带扩展名，则直接用；否则补一个默认值（从 currentImage.naturalWidth 无法判断格式）
+            if (!/\.[a-z0-9]+$/i.test(sourceNameForSpec)) {
+                // 没有扩展名时尝试从 canvas 是否含透明像素来推测（成本太高），保守回落到 PNG
+                // 你也可以改成：临时读一下 item.image.name
+                if (typeof matchedFiles !== 'undefined' && currentFileIndex >= 0 && matchedFiles[currentFileIndex]) {
+                    sourceNameForSpec = matchedFiles[currentFileIndex].image.name;
+                }
+            }
+            const spec = getExportSpec(sourceNameForSpec);
 
             try {
                 const offCanvas = document.createElement('canvas');
@@ -9192,24 +9323,26 @@ ctx.translate(0, Math.round(charY));
                 // 设置画布尺寸
                 offCanvas.width = currentImage.width;
                 offCanvas.height = currentImage.height;
-
+        
+                // 🌟 [新增] 非 PNG 格式先铺白底
+                if (spec.needsWhiteBG) {
+                    offCtx.fillStyle = '#ffffff';
+                    offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+                }
+        
                 // --- 第一层：画原图 ---
                 offCtx.drawImage(currentImage, 0, 0);
-
-                // --- 第二层：蒙版局部修复 (同步预览逻辑) ---
-                // --- 修改后的 exportCurrentSingleImage 修复层逻辑 ---
+        
+                // --- 第二层：蒙版局部修复 ---
                 if (currentRepairImage) {
                     if (ignoreMaskForRepair) {
                         offCtx.drawImage(currentRepairImage, 0, 0, offCanvas.width, offCanvas.height);
                     } else {
-                        // --- 【核心修改点】 ---
-                        // 不要判断 currentMaskImage，直接创建一个临时画布来合成
                         const mCanvas = document.createElement('canvas');
                         mCanvas.width = offCanvas.width;
                         mCanvas.height = offCanvas.height;
                         const mCtx = mCanvas.getContext('2d');
-
-                        // 【重点】：直接把当前屏幕上的 maskCanvas 画进去，它才是最新的！
+        
                         mCtx.drawImage(maskCanvas, 0, 0); 
                         
                         mCtx.globalCompositeOperation = 'source-atop';
@@ -9217,17 +9350,20 @@ ctx.translate(0, Math.round(charY));
                         offCtx.drawImage(mCanvas, 0, 0);
                     }
                 }
-                // --- 【新增】在文字层之前绘制涂鸦内容 ---
+        
+                // --- 第三层：涂鸦 ---
                 if (paintCanvas.width > 0) {
                     offCtx.drawImage(paintCanvas, 0, 0);
                 }
-                // --- 第三层：画文字 ---
+        
+                // --- 第四层：文字 ---
                 ctx = offCtx; // 劫持全局 ctx 变量指向离屏画布
                 regions.forEach(r => drawSmartTranslation(r));
-
+        
                 const link = document.createElement('a');
-                link.download = `${currentFileName}_translated.png`;
-                link.href = offCanvas.toDataURL("image/png");
+                link.download = `${currentFileName}_translated.${spec.ext}`;
+                // 🌟 输出时使用指定 MIME 和品质
+                link.href = offCanvas.toDataURL(spec.mime, spec.quality);
                 link.click();
                 
                 btn.innerText = "✅ 已导出";
